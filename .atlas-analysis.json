@@ -1,0 +1,212 @@
+{
+  "projectType": "saas",
+  "projectName": "Mullvad VPN",
+  "projectDescription": "Privacy-focused VPN client application for desktop and mobile platforms",
+  "theme": "aspen",
+  "primaryColor": "#294d73",
+  "lightColor": "#5c7fa3",
+  "darkColor": "#1a3449",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/wireguard",
+              "features/quantum-resistant",
+              "features/daita",
+              "features/multihop",
+              "features/obfuscation",
+              "features/split-tunneling",
+              "features/custom-dns",
+              "features/content-blockers",
+              "features/local-network-access"
+            ]
+          },
+          {
+            "group": "Platform Guides",
+            "pages": [
+              "platforms/overview",
+              "platforms/desktop",
+              "platforms/android",
+              "platforms/ios",
+              "platforms/cli"
+            ]
+          },
+          {
+            "group": "Security & Privacy",
+            "pages": [
+              "security/overview",
+              "security/leak-protection",
+              "security/firewall",
+              "security/kill-switch",
+              "security/tunnel-states",
+              "security/audits"
+            ]
+          },
+          {
+            "group": "Account & Devices",
+            "pages": [
+              "account/management",
+              "account/device-management",
+              "account/authentication"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Architecture",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "architecture/overview",
+              "architecture/daemon",
+              "architecture/frontends",
+              "architecture/tunnel-state-machine"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "architecture/components/mullvad-vs-talpid",
+              "architecture/components/management-interface",
+              "architecture/components/relay-selector",
+              "architecture/components/api-communication",
+              "architecture/components/offline-detection"
+            ]
+          },
+          {
+            "group": "Connection",
+            "pages": [
+              "architecture/connection/wireguard",
+              "architecture/connection/quantum-resistant",
+              "architecture/connection/obfuscation-protocols"
+            ]
+          },
+          {
+            "group": "System Integration",
+            "pages": [
+              "architecture/system/firewall-integration",
+              "architecture/system/dns-management",
+              "architecture/system/routing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "cli/overview",
+              "cli/installation"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/commands/connect",
+              "cli/commands/disconnect",
+              "cli/commands/status",
+              "cli/commands/account",
+              "cli/commands/relay",
+              "cli/commands/tunnel",
+              "cli/commands/dns",
+              "cli/commands/split-tunnel",
+              "cli/commands/lockdown",
+              "cli/commands/auto-connect",
+              "cli/commands/lan",
+              "cli/commands/custom-list"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "cli/configuration/settings",
+              "cli/configuration/environment-variables",
+              "cli/configuration/file-paths"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "development/building",
+              "development/repository-structure",
+              "development/development-environment"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "development/contributing",
+              "development/code-signing",
+              "development/security-practices"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "development/testing-overview",
+              "development/platform-specific-testing"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "development/release-process",
+              "development/troubleshooting",
+              "development/known-issues"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "WireGuard and quantum-resistant tunnels with DAITA support",
+    "Multi-platform support (Windows, macOS, Linux, Android, iOS)",
+    "WireGuard multihop and multiple obfuscation protocols (TCP, Shadowsocks, QUIC, LWO)",
+    "Split tunneling with per-app and per-process exclusions",
+    "Custom DNS and content blockers (ads, trackers, malware)",
+    "Strict leak protection with firewall integration",
+    "Kill switch functionality and lockdown mode",
+    "Local network access control",
+    "Device and account management",
+    "Externally audited security"
+  ],
+  "publicApiSurface": [
+    "mullvad connect - Connect to VPN tunnel",
+    "mullvad disconnect - Disconnect from VPN tunnel",
+    "mullvad status - Get current tunnel state",
+    "mullvad account - Manage account (login, logout, create)",
+    "mullvad relay set - Configure relay settings and constraints",
+    "mullvad tunnel - Configure tunnel settings (WireGuard, quantum-resistant, DAITA)",
+    "mullvad dns - Configure custom DNS servers",
+    "mullvad split-tunnel - Configure split tunneling",
+    "mullvad lockdown-mode - Enable/disable lockdown mode",
+    "mullvad auto-connect - Configure auto-connect behavior",
+    "mullvad lan - Configure local network access",
+    "mullvad custom-list - Manage custom relay lists",
+    "ManagementService gRPC API - Complete daemon control interface",
+    "Desktop GUI (Electron) - Graphical user interface",
+    "Android VPN Service - Android VPN integration",
+    "iOS Network Extension - iOS VPN integration"
+  ]
+}
