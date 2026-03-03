@@ -1,0 +1,68 @@
+---
+title: reconnect
+description: Reconnect to any matching VPN relay
+icon: arrows-rotate
+---
+
+The `mullvad reconnect` command disconnects and immediately reconnects to a VPN relay that matches your current relay constraints.
+
+## Usage
+
+```bash
+mullvad reconnect [OPTIONS]
+```
+
+## Options
+
+<ParamField path="-w, --wait" type="flag">
+  Wait until reconnected before exiting. By default, the command returns immediately after initiating the reconnection.
+</ParamField>
+
+## Examples
+
+### Reconnect immediately
+
+```bash
+mullvad reconnect
+```
+
+Initiates reconnection and returns immediately.
+
+### Reconnect and wait
+
+```bash
+mullvad reconnect --wait
+```
+
+Reconnects and waits until the new connection is established before exiting.
+
+## When to use reconnect
+
+Use `reconnect` when you want to:
+- Switch to a different relay server while maintaining your current constraints
+- Refresh your connection without changing settings
+- Get a new IP address from the same location
+- Recover from a degraded connection
+
+## How it works
+
+The reconnect command:
+1. Disconnects from the current relay
+2. Selects a new relay matching your current constraints (location, protocol, etc.)
+3. Establishes a new connection
+
+<Info>
+The selected relay may be the same as before if only one relay matches your constraints.
+</Info>
+
+## Exit status
+
+- `0` - Successfully initiated reconnection (or completed if using `--wait`)
+- `1` - Failed to reconnect or daemon error
+
+## Related commands
+
+- [`connect`](/cli/commands/connect) - Connect to VPN
+- [`disconnect`](/cli/commands/disconnect) - Disconnect from VPN
+- [`status`](/cli/commands/status) - Check connection status
+- [`relay set`](/cli/commands/relay) - Configure relay constraints

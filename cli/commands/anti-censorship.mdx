@@ -1,0 +1,163 @@
+---
+title: anti-censorship
+description: Manage anti-censorship methods for WireGuard
+icon: user-secret
+---
+
+The `mullvad anti-censorship` command configures methods to make WireGuard traffic less detectable, helping circumvent censorship and establish tunnels on restricted networks.
+
+## Overview
+
+Anti-censorship features disguise WireGuard traffic as other protocols to bypass:
+- Deep packet inspection (DPI)
+- Protocol-based blocking
+- VPN detection systems
+- Network traffic analysis
+
+These methods add a small performance overhead but can be crucial for connectivity in restricted environments.
+
+## Usage
+
+```bash
+mullvad anti-censorship <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display current anti-censorship settings.
+
+```bash
+mullvad anti-censorship get
+```
+
+**Example output:**
+```
+Anti-censorship: Auto
+UDP-over-TCP: Auto
+```
+
+### set
+
+Configure anti-censorship mode.
+
+```bash
+mullvad anti-censorship set <MODE>
+```
+
+**Modes:**
+- `auto` - Automatically enable when needed (default)
+- `on` - Always use anti-censorship methods
+- `off` - Never use anti-censorship methods
+
+### udp2tcp
+
+Configure UDP-over-TCP obfuscation specifically.
+
+```bash
+mullvad anti-censorship udp2tcp <on|off|auto>
+```
+
+## Examples
+
+### Check current settings
+
+```bash
+mullvad anti-censorship get
+```
+
+### Enable anti-censorship
+
+```bash
+mullvad anti-censorship set on
+```
+
+Forces use of anti-censorship methods for all connections.
+
+### Use automatic mode
+
+```bash
+mullvad anti-censorship set auto
+```
+
+Lets the daemon decide when to use obfuscation based on connection success.
+
+### Disable anti-censorship
+
+```bash
+mullvad anti-censorship set off
+```
+
+Disables all obfuscation, using standard WireGuard.
+
+### Configure UDP-over-TCP
+
+```bash
+mullvad anti-censorship udp2tcp on
+```
+
+Forces UDP-over-TCP encapsulation.
+
+## Available methods
+
+### UDP-over-TCP (UDP2TCP)
+
+Encapsulates UDP traffic inside TCP connections:
+- Bypasses UDP blocking
+- Appears as standard TCP traffic
+- Small latency increase due to TCP overhead
+- Works on networks that only allow TCP
+
+### Automatic mode behavior
+
+In `auto` mode:
+1. First connection attempt uses standard WireGuard
+2. If connection fails, tries with obfuscation
+3. Remembers successful method for future connections
+4. Periodically retries without obfuscation to optimize performance
+
+## When to use
+
+**Enable anti-censorship when:**
+- VPN connections are blocked in your region
+- Corporate networks block VPN protocols
+- You experience connection failures on public WiFi
+- ISP throttles or blocks VPN traffic
+
+**Use automatic mode when:**
+- You travel frequently between different networks
+- Connection reliability varies
+- You want optimal performance with fallback protection
+
+**Disable when:**
+- Operating on unrestricted networks
+- Maximum performance is required
+- You're certain WireGuard is not blocked
+
+<Info>
+Anti-censorship is different from obfuscation settings in the `tunnel` command. This setting specifically addresses connectivity to Mullvad servers, while tunnel obfuscation affects the tunnel protocol itself.
+</Info>
+
+## Performance impact
+
+- **UDP-over-TCP**: 5-15% throughput reduction, slight latency increase
+- **Auto mode**: No impact when not needed, minimal impact when enabled
+
+## Configuration persistence
+
+Settings are saved in the daemon configuration and persist across:
+- Daemon restarts
+- System reboots
+- App updates
+
+## Exit status
+
+- `0` - Success
+- `1` - Daemon error or invalid argument
+
+## Related commands
+
+- [`tunnel`](/cli/commands/tunnel) - Configure tunnel-level obfuscation protocols
+- [`api-access`](/cli/commands/api-access) - Configure API access methods
+- [`connect`](/cli/commands/connect) - Connect to VPN

@@ -1,0 +1,235 @@
+---
+title: log
+description: Manage logging and debug output
+icon: file-lines
+---
+
+The `mullvad log` command controls logging behavior and output verbosity for the Mullvad VPN daemon.
+
+## Usage
+
+```bash
+mullvad log <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display current log settings.
+
+```bash
+mullvad log get
+```
+
+**Example output:**
+```
+Log level: debug
+Log to file: true
+Log to console: false
+```
+
+### set-level
+
+Set the logging level.
+
+```bash
+mullvad log set-level <LEVEL>
+```
+
+**Available levels:**
+- `error` - Only errors
+- `warn` - Warnings and errors
+- `info` - Informational messages, warnings, and errors (default)
+- `debug` - Debug information plus all above
+- `trace` - Very verbose tracing plus all above
+
+### set-file
+
+Enable or disable logging to file.
+
+```bash
+mullvad log set-file <on|off>
+```
+
+## Examples
+
+### Check current settings
+
+```bash
+mullvad log get
+```
+
+### Enable debug logging
+
+```bash
+mullvad log set-level debug
+```
+
+Useful for troubleshooting connection issues.
+
+### Enable trace logging
+
+```bash
+mullvad log set-level trace
+```
+
+<Warning>
+Trace logging is very verbose and can impact performance. Only use when debugging specific issues.
+</Warning>
+
+### Reset to default
+
+```bash
+mullvad log set-level info
+```
+
+### Disable file logging
+
+```bash
+mullvad log set-file off
+```
+
+Reduces disk I/O but makes troubleshooting harder.
+
+## Log file locations
+
+When file logging is enabled:
+
+**Linux:**
+- `/var/log/mullvad-vpn/daemon.log`
+- Systemd journal: `journalctl -u mullvad-daemon`
+
+**macOS:**
+- `/var/log/mullvad-vpn/daemon.log`
+
+**Windows:**
+- `C:\ProgramData\Mullvad VPN\daemon.log`
+
+## Log rotation
+
+Logs are automatically rotated:
+- Maximum size: 10 MB per file
+- Keeps 3 rotated files
+- Old files are compressed or deleted
+
+## When to use different log levels
+
+### error
+
+Use when:
+- Disk space is critically low
+- You only need to see failures
+- Performance is paramount
+
+### warn (default)
+
+Use for:
+- Normal operation
+- Production systems
+- When you don't need detailed diagnostics
+
+### info
+
+Use when:
+- You want to see connection events
+- Monitoring configuration changes
+- General operational visibility
+
+### debug
+
+Use when:
+- Troubleshooting connection issues
+- Debugging relay selection
+- Investigating firewall rules
+- Working with Mullvad support
+
+### trace
+
+Use when:
+- Debugging specific protocol issues
+- Analyzing packet flow
+- Detailed performance analysis
+- Requested by Mullvad developers
+
+## Debugging workflow
+
+```bash
+# 1. Enable debug logging
+mullvad log set-level debug
+
+# 2. Reproduce the issue
+mullvad connect
+# ... wait for issue to occur
+
+# 3. Collect logs
+sudo journalctl -u mullvad-daemon --since "10 minutes ago" > issue-logs.txt
+# or on non-systemd systems:
+sudo cat /var/log/mullvad-vpn/daemon.log > issue-logs.txt
+
+# 4. Reset log level
+mullvad log set-level info
+
+# 5. Submit logs to support
+```
+
+## Privacy considerations
+
+Logs may contain:
+- Relay server IP addresses
+- Connection timestamps
+- Network interface names
+- System configuration details
+
+Logs do NOT contain:
+- Your account number
+- DNS queries
+- Websites visited
+- Tunnel traffic content
+
+<Info>
+Mullvad's privacy policy applies to logs. If sharing logs with support, review them first to ensure you're comfortable with the information disclosed.
+</Info>
+
+## Environment variable override
+
+For daemon-level logging configuration, use environment variables:
+
+```bash
+# Set log level via environment (Linux)
+sudo systemctl edit mullvad-daemon.service
+```
+
+Add:
+```ini
+[Service]
+Environment="RUST_LOG=debug"
+```
+
+See [Environment Variables](/cli/configuration/environment-variables) for more options.
+
+## Performance impact
+
+| Level | CPU Impact | Disk I/O | Disk Space |
+|-------|-----------|----------|------------|
+| error | Minimal | Minimal | Very low |
+| warn | Minimal | Low | Low |
+| info | Low | Low | Moderate |
+| debug | Moderate | Moderate | High |
+| trace | High | High | Very high |
+
+## Exit status
+
+- `0` - Success
+- `1` - Invalid log level or daemon error
+
+## Related commands
+
+- [`factory-reset`](/cli/commands/factory-reset) - Clears all logs
+- [`status`](/cli/commands/status) - Check connection status
+
+## Related documentation
+
+- [Environment Variables](/cli/configuration/environment-variables) - Daemon-level logging config
+- [File Paths](/cli/configuration/file-paths) - Log file locations
+- [Troubleshooting](/development/troubleshooting) - Using logs to debug issues

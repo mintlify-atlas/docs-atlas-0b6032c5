@@ -1,0 +1,201 @@
+---
+title: factory-reset
+description: Reset all settings, caches, and logs
+icon: rotate-left
+---
+
+The `mullvad factory-reset` command completely resets the Mullvad VPN app to its initial state, removing all settings, cached data, logs, and account information.
+
+## Usage
+
+```bash
+mullvad factory-reset [OPTIONS]
+```
+
+## Options
+
+<ParamField path="-y, --assume-yes" type="flag">
+  Automatically answer "yes" to confirmation prompt. Useful for scripting.
+</ParamField>
+
+## What gets reset
+
+A factory reset removes:
+
+### Account data
+- Logged in account (you'll need to log in again)
+- Account token
+- Device information
+- WireGuard keys
+
+### Settings
+- All VPN settings (relay selection, tunnel options, etc.)
+- Custom relay lists
+- Split tunneling configuration
+- DNS settings
+- All preferences
+
+### Cached data
+- Relay list cache
+- Geographic location cache
+- API response caches
+- Version information
+
+### Logs
+- All daemon logs
+- Problem report data
+- Debug logs
+
+## What persists
+
+The following are NOT reset:
+- Installed application files
+- GUI application data (desktop only)
+- System-level configuration (systemd service, launch daemons, etc.)
+
+## Examples
+
+### Interactive reset
+
+```bash
+mullvad factory-reset
+```
+
+Prompts for confirmation:
+```
+This will reset all settings, remove all logs and cached data, and log you out.
+Continue? [y/N]
+```
+
+### Non-interactive reset
+
+```bash
+mullvad factory-reset --assume-yes
+```
+
+Skips confirmation prompt. Useful in scripts.
+
+### Scripting example
+
+```bash
+#!/bin/bash
+# Reset VPN and reconfigure
+mullvad factory-reset -y
+mullvad account login 1234567890123456
+mullvad relay set location se got
+mullvad auto-connect set on
+```
+
+## When to use factory reset
+
+**Use factory reset when:**
+- Troubleshooting persistent configuration issues
+- Transferring the app to a new user
+- Starting with a clean configuration
+- Resolving corrupt settings
+- Following security incident response procedures
+
+**Don't use if you only want to:**
+- Reset settings but keep logs → Use `reset-settings` instead
+- Change one specific setting → Use the relevant `set` command
+- Clear logs only → Delete log files manually or use `log` commands
+
+## Alternative: Reset settings only
+
+To reset only settings while keeping logs and account:
+
+```bash
+mullvad reset-settings
+```
+
+See [`reset-settings`](/cli/commands/import-export-settings#reset-settings) for details.
+
+## Safety considerations
+
+<Warning>
+Factory reset is irreversible. Ensure you have:
+- Your account number saved elsewhere
+- Exported any important settings
+- Backed up custom configurations
+</Warning>
+
+### Before factory reset checklist
+
+1. **Save account number**
+   ```bash
+   mullvad account get
+   ```
+   Write down or save the account number.
+
+2. **Export settings** (optional)
+   ```bash
+   mullvad export-settings settings-backup.json
+   ```
+
+3. **Disconnect from VPN**
+   ```bash
+   mullvad disconnect
+   ```
+
+4. **Perform reset**
+   ```bash
+   mullvad factory-reset
+   ```
+
+## After factory reset
+
+After reset completes:
+1. The daemon continues running but is logged out
+2. All settings are at default values
+3. You must log in to use the VPN again
+4. The app is in the same state as a fresh installation
+
+### Post-reset steps
+
+```bash
+# Log in with your account
+mullvad account login YOUR_ACCOUNT_NUMBER
+
+# Restore settings (if exported)
+mullvad import-settings settings-backup.json
+
+# Or reconfigure manually
+mullvad relay set location us nyc
+mullvad auto-connect set on
+mullvad lan set allow
+```
+
+## Platform-specific behavior
+
+### Linux
+
+Resets:
+- `/etc/mullvad-vpn/settings.json`
+- `/var/cache/mullvad-vpn/`
+- `/var/log/mullvad-vpn/`
+
+### macOS
+
+Resets:
+- `/etc/mullvad-vpn/settings.json`
+- `/Library/Caches/mullvad-vpn/`
+- `/var/log/mullvad-vpn/`
+
+### Windows
+
+Resets:
+- `C:\ProgramData\Mullvad VPN\settings.json`
+- `C:\ProgramData\Mullvad VPN\cache\`
+- `C:\ProgramData\Mullvad VPN\*.log`
+
+## Exit status
+
+- `0` - Successfully reset
+- `1` - Reset failed or user cancelled
+- `2` - Daemon not running
+
+## Related commands
+
+- [`reset-settings`](/cli/commands/import-export-settings#reset-settings) - Reset settings only
+- [`export-settings`](/cli/commands/import-export-settings) - Backup current settings
+- [`account logout`](/cli/commands/account) - Log out but keep settings

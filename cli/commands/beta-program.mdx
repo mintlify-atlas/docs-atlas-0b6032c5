@@ -1,0 +1,96 @@
+---
+title: beta-program
+description: Manage beta update notifications
+icon: flask
+---
+
+The `mullvad beta-program` command controls whether you receive notifications about beta releases of the Mullvad VPN app.
+
+## Usage
+
+```bash
+mullvad beta-program <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display current beta program status.
+
+```bash
+mullvad beta-program get
+```
+
+**Output:**
+```
+Beta program: on
+```
+or
+```
+Beta program: off
+```
+
+### set
+
+Enable or disable beta program notifications.
+
+```bash
+mullvad beta-program set <on|off>
+```
+
+<ParamField path="value" type="string" required>
+  Either `on` to enable beta notifications or `off` to disable them.
+</ParamField>
+
+## Examples
+
+### Check beta program status
+
+```bash
+mullvad beta-program get
+```
+
+### Enable beta notifications
+
+```bash
+mullvad beta-program set on
+```
+
+### Disable beta notifications
+
+```bash
+mullvad beta-program set off
+```
+
+## What beta program does
+
+When enabled:
+- You'll receive notifications about beta releases in the app
+- You can opt to install beta versions before they're generally available
+- Helps Mullvad test new features before stable release
+
+When disabled:
+- You'll only see notifications for stable releases
+- No beta versions will be offered for installation
+
+<Note>
+Enabling beta notifications does not automatically install beta versions. You'll still need to manually approve any updates.
+</Note>
+
+## Configuration file
+
+This setting is stored in the daemon's settings file:
+- Linux/macOS: `/etc/mullvad-vpn/settings.json`
+- Windows: `C:\ProgramData\Mullvad VPN\settings.json`
+
+The setting is persisted across daemon restarts.
+
+## Exit status
+
+- `0` - Success
+- `1` - Daemon error or invalid argument
+
+## Related commands
+
+- [`version`](/cli/commands/version) - Check current and available versions

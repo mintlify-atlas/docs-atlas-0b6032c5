@@ -1,0 +1,135 @@
+---
+title: version
+description: Show version information
+icon: code-branch
+---
+
+The `mullvad version` command displays information about the current Mullvad VPN version and checks for available updates.
+
+## Usage
+
+```bash
+mullvad version
+```
+
+No options or arguments required.
+
+## Output
+
+The command displays:
+- Current installed version
+- Whether the version is supported
+- Latest available version (if different)
+- Whether an update is available
+
+## Example output
+
+### Up to date
+
+```
+Current version: 2024.1
+Latest stable version: 2024.1
+You are running the latest version
+```
+
+### Update available
+
+```
+Current version: 2023.6
+Latest stable version: 2024.1
+A new version is available!
+```
+
+### Beta version
+
+```
+Current version: 2024.2-beta1
+Latest stable version: 2024.1
+Latest beta version: 2024.2-beta1
+You are running a beta version
+```
+
+## Version information
+
+### Version format
+
+Mullvad VPN uses calendar versioning:
+- Format: `YYYY.N` (e.g., `2024.1`, `2024.2`)
+- `YYYY` - Year of release
+- `N` - Sequential release number for that year
+- Beta versions append `-betaN` (e.g., `2024.2-beta1`)
+
+### Supported versions
+
+Mullvad typically supports:
+- Current stable release
+- One previous stable release
+- Current beta (if enrolled in beta program)
+
+Running unsupported versions may have security vulnerabilities.
+
+## Update checks
+
+The daemon automatically checks for updates:
+- Every 24 hours when disconnected
+- When explicitly requested via this command
+- Does not check when connected (to avoid leaking information)
+
+<Info>
+Automatic update checks can be disabled in development builds using the `MULLVAD_ENABLE_DEV_UPDATES` environment variable.
+</Info>
+
+## Beta program
+
+If enrolled in the beta program:
+- Shows both stable and beta version information
+- Notifies about beta releases
+- Does not automatically install beta versions
+
+Manage beta enrollment with:
+```bash
+mullvad beta-program set on|off
+```
+
+## Update process
+
+The CLI only shows version information. To update:
+
+**Desktop (GUI):**
+- Notifications appear when updates are available
+- Click to download and install
+
+**Manual update:**
+1. Download from [mullvad.net/download](https://mullvad.net/download/)
+2. Verify signature (recommended)
+3. Install package for your platform
+
+**CLI-only systems:**
+```bash
+# Check for updates
+mullvad version
+
+# Download and install manually using your package manager
+# Debian/Ubuntu:
+sudo apt update && sudo apt upgrade mullvad-vpn
+
+# Fedora/RHEL:
+sudo dnf upgrade mullvad-vpn
+```
+
+## Version metadata
+
+The command also shows:
+- Build commit hash (for development builds)
+- Supported protocol versions
+- Compatible daemon API version
+
+## Exit status
+
+- `0` - Successfully retrieved version information
+- `1` - Failed to connect to daemon or retrieve version info
+
+## Related commands
+
+- [`beta-program`](/cli/commands/beta-program) - Manage beta program enrollment
+- [`status`](/cli/commands/status) - Check connection status

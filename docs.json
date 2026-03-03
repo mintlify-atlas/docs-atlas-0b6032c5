@@ -131,6 +131,7 @@
             "pages": [
               "cli/commands/connect",
               "cli/commands/disconnect",
+              "cli/commands/reconnect",
               "cli/commands/status",
               "cli/commands/account",
               "cli/commands/relay",
@@ -140,7 +141,14 @@
               "cli/commands/lockdown",
               "cli/commands/auto-connect",
               "cli/commands/lan",
-              "cli/commands/custom-list"
+              "cli/commands/custom-list",
+              "cli/commands/beta-program",
+              "cli/commands/api-access",
+              "cli/commands/anti-censorship",
+              "cli/commands/version",
+              "cli/commands/factory-reset",
+              "cli/commands/import-export-settings",
+              "cli/commands/log"
             ]
           },
           {

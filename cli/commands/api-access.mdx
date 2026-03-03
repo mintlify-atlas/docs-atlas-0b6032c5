@@ -1,0 +1,183 @@
+---
+title: api-access
+description: Manage Mullvad API access methods
+icon: network-wired
+---
+
+The `mullvad api-access` command manages access methods for connecting to the Mullvad API. Access methods are used when direct connections fail, such as when using the VPN from censored networks.
+
+## Overview
+
+Access methods allow the Mullvad daemon to reach the API via:
+- Direct connection (default)
+- Mullvad bridge servers
+- Custom SOCKS5 proxies
+- Custom Shadowsocks proxies
+
+If the daemon cannot connect directly to the API, it automatically tries configured access methods until one succeeds.
+
+## Usage
+
+```bash
+mullvad api-access <SUBCOMMAND>
+```
+
+## Subcommands
+
+### list
+
+List all configured API access methods.
+
+```bash
+mullvad api-access list
+```
+
+**Example output:**
+```
+Current: Direct
+
+Built-in:
+  1. Direct (active)
+  2. Mullvad Bridges
+
+Custom:
+  3. My SOCKS5 Proxy
+  4. Shadowsocks Proxy
+```
+
+### add
+
+Add a custom API access method.
+
+```bash
+mullvad api-access add <TYPE> <NAME> <CONFIG>
+```
+
+**Supported types:**
+- `socks5` - SOCKS5 proxy
+- `shadowsocks` - Shadowsocks proxy
+
+### remove
+
+Remove a custom API access method by name or index.
+
+```bash
+mullvad api-access remove <NAME_OR_INDEX>
+```
+
+### set
+
+Set the active API access method.
+
+```bash
+mullvad api-access set <NAME_OR_INDEX>
+```
+
+### test
+
+Test an API access method.
+
+```bash
+mullvad api-access test <NAME_OR_INDEX>
+```
+
+## Examples
+
+### List access methods
+
+```bash
+mullvad api-access list
+```
+
+### Add SOCKS5 proxy
+
+```bash
+mullvad api-access add socks5 "My Proxy" \
+  --server 192.168.1.100:1080 \
+  --username myuser \
+  --password mypass
+```
+
+### Add Shadowsocks proxy
+
+```bash
+mullvad api-access add shadowsocks "SS Proxy" \
+  --server 192.168.1.100:8388 \
+  --password mypassword \
+  --cipher aes-256-gcm
+```
+
+### Set active method
+
+```bash
+mullvad api-access set 2
+```
+
+Sets the access method at index 2 as active.
+
+### Test access method
+
+```bash
+mullvad api-access test "My Proxy"
+```
+
+Tests if the specified proxy can reach the Mullvad API.
+
+### Remove custom method
+
+```bash
+mullvad api-access remove "My Proxy"
+```
+
+## Built-in access methods
+
+### Direct
+
+Connects directly to the Mullvad API over HTTPS. This is the default and fastest method when available.
+
+### Mullvad Bridges
+
+Connects via Mullvad's bridge servers using Shadowsocks. Automatically configured and maintained by Mullvad. Useful when direct connections are blocked.
+
+## Custom access methods
+
+You can add custom proxies when:
+- Operating in networks with strict firewall rules
+- Behind corporate proxies
+- In regions with heavy censorship
+- You have your own proxy infrastructure
+
+<Warning>
+Custom access methods are used to reach the Mullvad API, not for VPN traffic. VPN traffic uses the configured tunnel protocol.
+</Warning>
+
+## Automatic failover
+
+The daemon automatically:
+1. Tries the currently active access method
+2. If that fails, tries other configured methods in order
+3. Switches to the first successful method
+4. Retries periodically if all methods fail
+
+## What requires API access
+
+- Account login and logout
+- Fetching relay list
+- WireGuard key rotation
+- Device management
+- Voucher redemption
+- Account information queries
+
+<Info>
+Once connected to the VPN, API calls go through the tunnel. Access methods are primarily used before connection or when disconnected.
+</Info>
+
+## Exit status
+
+- `0` - Success
+- `1` - Daemon error, invalid configuration, or connection failure
+
+## Related commands
+
+- [`anti-censorship`](/cli/commands/anti-censorship) - Configure tunnel obfuscation
+- [`status`](/cli/commands/status) - Check connection status

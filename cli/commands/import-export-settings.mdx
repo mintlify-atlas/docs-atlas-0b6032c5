@@ -1,0 +1,269 @@
+---
+title: import-settings / export-settings
+description: Import and export VPN settings
+icon: file-export
+---
+
+The `mullvad import-settings` and `mullvad export-settings` commands allow you to backup and restore your VPN configuration as JSON files.
+
+## export-settings
+
+Export current settings to a JSON file.
+
+### Usage
+
+```bash
+mullvad export-settings <FILE>
+```
+
+<ParamField path="FILE" type="string" required>
+  Output file path. Use `-` to write to standard output.
+</ParamField>
+
+### Examples
+
+**Export to file:**
+```bash
+mullvad export-settings my-settings.json
+```
+
+**Export to stdout:**
+```bash
+mullvad export-settings - | jq .
+```
+
+**Backup with timestamp:**
+```bash
+mullvad export-settings "settings-$(date +%Y%m%d).json"
+```
+
+## import-settings
+
+Import settings from a JSON file.
+
+### Usage
+
+```bash
+mullvad import-settings <FILE>
+```
+
+<ParamField path="FILE" type="string" required>
+  Input file path. Use `-` to read from standard input.
+</ParamField>
+
+### Examples
+
+**Import from file:**
+```bash
+mullvad import-settings my-settings.json
+```
+
+**Import from stdin:**
+```bash
+cat my-settings.json | mullvad import-settings -
+```
+
+**Apply settings on new machine:**
+```bash
+# On old machine
+mullvad export-settings settings.json
+
+# Transfer file to new machine
+scp settings.json newhost:
+
+# On new machine
+mullvad account login YOUR_ACCOUNT
+mullvad import-settings settings.json
+```
+
+## Settings format
+
+The exported JSON file contains:
+- Relay constraints (location, providers, ownership)
+- Tunnel settings (protocol, obfuscation, quantum resistance)
+- DNS configuration
+- Split tunneling rules
+- Auto-connect preference
+- LAN access setting
+- Lockdown mode setting
+- Custom lists
+
+### Example settings file
+
+```json
+{
+  "relay_settings": {
+    "normal": {
+      "location": {
+        "only": {
+          "country": "se"
+        }
+      },
+      "tunnel_protocol": "wireguard"
+    }
+  },
+  "tunnel_options": {
+    "wireguard": {
+      "mtu": 1380,
+      "quantum_resistant": "auto"
+    }
+  },
+  "dns_options": {
+    "state": "default",
+    "default_options": {
+      "block_ads": true,
+      "block_trackers": true
+    }
+  },
+  "auto_connect": true,
+  "allow_lan": false,
+  "block_when_disconnected": false
+}
+```
+
+## What is NOT included
+
+- Account token (you must log in separately)
+- Device information
+- WireGuard keys
+- Logs or cached data
+- API access methods (stored separately)
+- Beta program preference
+
+<Warning>
+Settings files do not contain account credentials. You must log in before or after importing settings.
+</Warning>
+
+## Use cases
+
+### Backup before changes
+
+```bash
+# Backup current config
+mullvad export-settings backup-before-changes.json
+
+# Make changes
+mullvad relay set location us
+mullvad dns set custom 1.1.1.1
+
+# Restore if needed
+mullvad import-settings backup-before-changes.json
+```
+
+### Replicate configuration
+
+```bash
+# Export on primary device
+mullvad export-settings shared-config.json
+
+# Import on all other devices
+for host in laptop desktop phone; do
+  scp shared-config.json $host:
+  ssh $host 'mullvad import-settings shared-config.json'
+done
+```
+
+### Version control
+
+```bash
+# Track settings in git
+mkdir -p ~/.config/mullvad-backups
+cd ~/.config/mullvad-backups
+git init
+
+mullvad export-settings current.json
+git add current.json
+git commit -m "Update VPN settings"
+```
+
+### Automation
+
+```bash
+#!/bin/bash
+# Automated backup script
+BACKUP_DIR="$HOME/mullvad-backups"
+mkdir -p "$BACKUP_DIR"
+
+# Daily backup with rotation
+mullvad export-settings "$BACKUP_DIR/settings-$(date +%Y%m%d).json"
+
+# Keep only last 30 days
+find "$BACKUP_DIR" -name 'settings-*.json' -mtime +30 -delete
+```
+
+## reset-settings
+
+Reset all settings to defaults while keeping logs and account login.
+
+### Usage
+
+```bash
+mullvad reset-settings [OPTIONS]
+```
+
+<ParamField path="-y, --assume-yes" type="flag">
+  Skip confirmation prompt.
+</ParamField>
+
+### Examples
+
+**Interactive reset:**
+```bash
+mullvad reset-settings
+```
+
+**Non-interactive:**
+```bash
+mullvad reset-settings -y
+```
+
+### What gets reset
+
+- All relay constraints (back to auto)
+- Tunnel options (protocol, obfuscation, quantum resistance)
+- DNS settings
+- Split tunneling rules
+- Custom lists
+- Auto-connect (off)
+- LAN access (blocked)
+- Lockdown mode (off)
+
+### What persists
+
+- Account login status
+- Device registration
+- Logs
+- Cached relay list
+
+<Info>
+Use `reset-settings` when you want a clean configuration but don't want to log out or lose logs. Use `factory-reset` for a complete reset including account logout.
+</Info>
+
+## Merging settings
+
+Imported settings are merged with current settings:
+- Specified fields are updated
+- Unspecified fields keep current values
+- This allows partial configuration updates
+
+### Partial update example
+
+```json
+{
+  "auto_connect": true,
+  "allow_lan": true
+}
+```
+
+Importing this file only changes auto-connect and LAN settings, leaving all other settings unchanged.
+
+## Exit status
+
+- `0` - Success
+- `1` - File error, invalid JSON, or daemon error
+- `2` - User cancelled (reset-settings only)
+
+## Related commands
+
+- [`factory-reset`](/cli/commands/factory-reset) - Complete reset including account
+- All `set` commands - Configure individual settings
