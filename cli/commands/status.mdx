@@ -1,0 +1,168 @@
+---
+title: "mullvad status"
+description: "Display VPN connection status and listen for state changes"
+---
+
+## Overview
+
+The `mullvad status` command displays the current state of the VPN tunnel and optionally listens for real-time state changes.
+
+## Syntax
+
+```bash
+mullvad status [OPTIONS] [COMMAND]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-v`, `--verbose` | Enable verbose output |
+| `-d`, `--debug` | Enable debug output (conflicts with `--verbose` and `--json`) |
+| `-j`, `--json` | Format output as JSON (conflicts with `--verbose` and `--debug`) |
+| `-h`, `--help` | Print help information |
+
+## Subcommands
+
+### listen
+
+Listen for tunnel state changes in real-time:
+
+```bash
+mullvad status listen [OPTIONS]
+```
+
+This command blocks and continuously prints tunnel state updates as they occur.
+
+## Output Formats
+
+The status command supports three output formats:
+
+1. **Standard** - Human-readable connection status
+2. **Verbose** (`-v`) - Includes additional connection details
+3. **Debug** (`-d`) - Full debug information about tunnel state
+4. **JSON** (`-j`) - Machine-readable JSON format
+
+## Tunnel States
+
+The command can report the following tunnel states:
+
+- **Disconnected** - Not connected to any relay
+- **Connecting** - Establishing connection to a relay
+- **Connected** - Successfully connected to a relay
+- **Disconnecting** - Terminating connection
+- **Error** - Connection error occurred
+
+## Examples
+
+### Basic Status Check
+
+Display current VPN status:
+
+```bash
+mullvad status
+```
+
+Output:
+```
+Connected to se-got-wg-004 in Gothenburg, Sweden
+```
+
+### Verbose Status
+
+Show detailed connection information:
+
+```bash
+mullvad status --verbose
+```
+
+Output:
+```
+Connected to se-got-wg-004 in Gothenburg, Sweden
+Tunnel protocol: WireGuard
+IPv4: 10.64.0.1
+IPv6: fc00:bbbb:bbbb:bb01::1
+```
+
+### JSON Output
+
+Get status in JSON format for scripting:
+
+```bash
+mullvad status --json
+```
+
+Output:
+```json
+{"state":"connected","details":{"location":"Gothenburg, Sweden","relay":"se-got-wg-004"}}
+```
+
+### Listen for State Changes
+
+Monitor tunnel state changes in real-time:
+
+```bash
+mullvad status listen
+```
+
+Output:
+```
+Connecting to se-got-wg-004...
+Connected to se-got-wg-004 in Gothenburg, Sweden
+```
+
+### Listen with JSON Output
+
+Stream state changes as JSON:
+
+```bash
+mullvad status listen --json
+```
+
+### Debug Output
+
+Show full debug information:
+
+```bash
+mullvad status --debug
+```
+
+## Events (Listen Mode)
+
+When using `status listen`, the command reports the following daemon events:
+
+- **TunnelState** - Tunnel connection state changes
+- **Settings** - Configuration changes
+- **RelayList** - Relay list updates
+- **AppVersionInfo** - Version information updates
+- **Device** - Device-related events
+- **RemoveDevice** - Device removal events
+- **NewAccessMethod** - New API access method
+- **LeakDetected** - Network leak detection
+
+## Warnings
+
+The command displays warnings for specific conditions:
+
+- **Not logged in** - You're not logged in to a Mullvad account
+- **Device revoked** - Your device has been revoked from the account
+
+These warnings appear when the tunnel is connecting, connected, or in an error state.
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect to VPN
+- [disconnect](/cli/commands/disconnect) - Disconnect from VPN
+- [account](/cli/commands/account) - Check account information
+- [relay](/cli/commands/relay) - View relay constraints
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Status retrieved successfully |
+| 1 | Failed to retrieve status or connection error |
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/status.rs`

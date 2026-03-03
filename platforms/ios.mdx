@@ -1,0 +1,418 @@
+---
+title: iOS Application
+description: Complete guide to using Mullvad VPN on iPhone and iPad
+---
+
+Mullvad VPN for iOS provides privacy-focused VPN protection using Apple's Network Extension framework. The iOS implementation is completely standalone and optimized for Apple's mobile platform.
+
+## System Requirements
+
+- **Minimum Version**: iOS 17.0 or newer
+- **Devices**: iPhone and iPad
+- **Connection**: Internet access for initial setup and server list updates
+
+## Download and Installation
+
+The iOS app is exclusively available through the Apple App Store:
+
+<Card title="App Store" icon="apple" href="https://apps.apple.com/us/app/mullvad-vpn/id1488466513">
+  Download Mullvad VPN from the Apple App Store
+</Card>
+
+<Note>
+  The iOS app source code is GPL-3 licensed like the rest of the project, but the distributed app falls under the [Apple App Store EULA](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/).
+</Note>
+
+## Architecture
+
+The iOS app has a unique, standalone implementation:
+
+### Packet Tunnel Extension
+
+The core VPN functionality:
+
+- **Network Extension**: Uses Apple's Network Extension framework
+- **Packet Tunnel Provider**: Custom tunnel provider implementation
+- **WireGuard-go**: Direct integration with wireguard-go library
+- **Tun Interface**: Works directly with the tun interface for packet handling
+
+### Standalone Implementation
+
+Unlike other platforms:
+
+- **No Shared Daemon**: Does not use `mullvad-daemon`
+- **Native Swift**: Written primarily in Swift for iOS
+- **Optimized**: Tailored specifically for iOS constraints and APIs
+- **Smaller Binary**: No unnecessary desktop-oriented code
+
+### Network Configuration
+
+Routing and DNS setup:
+
+- **Route Configuration**: Sets routing rules to send all traffic through tunnel
+- **DNS Settings**: Configures DNS servers through network extension
+- **System Integration**: Uses iOS's native VPN management
+
+## Security Features
+
+### Network Extension VPN
+
+The app uses iOS's secure VPN APIs:
+
+- **System-Level**: VPN operates at the system level
+- **Kill Switch**: Network Extension framework handles connection failures
+- **Automatic Reconnection**: iOS manages reconnection on network changes
+
+### Kill Switch
+
+Built-in protection against leaks:
+
+- **Implementation**: Via Network Extension configuration
+- **On Demand**: Can be configured to connect automatically
+- **Network Changes**: Maintains protection during WiFi/cellular transitions
+
+### DNS Protection
+
+DNS queries are secured:
+
+- **Default**: All DNS queries through VPN server
+- **Custom DNS**: Support for custom DNS servers
+- **Content Blocking**: Optional blocking of ads, trackers, and malware
+- **No Leaks**: DNS configuration enforced by Network Extension
+
+### Local Network Access
+
+Behavior differs from other platforms:
+
+<Warning>
+  The local network is always accessible on iOS with the current implementation. This is a platform limitation.
+</Warning>
+
+The iOS Network Extension framework does not provide fine-grained control to block local network access while maintaining functionality.
+
+## Features
+
+### Supported Features
+
+iOS supports most core Mullvad features:
+
+- **WireGuard Protocol**: Fast, modern VPN protocol
+- **Quantum-Resistant Tunnels**: Post-quantum cryptography
+- **Multihop**: Route through two VPN servers
+- **DAITA**: Defense Against AI-Guided Traffic Analysis
+- **Obfuscation**:
+  - WireGuard over TCP
+  - WireGuard over Shadowsocks
+  - WireGuard over QUIC
+- **Custom DNS**: Configure custom DNS servers
+- **Content Blockers**: Block ads, trackers, and malware
+
+### Platform Limitations
+
+Some features are not available on iOS:
+
+<Warning>
+  The following features are not supported on iOS:
+  - Lightweight WireGuard Obfuscation (LWO)
+  - Split Tunneling
+  - Configurable local network access (always allowed)
+</Warning>
+
+These limitations are due to iOS platform restrictions and Apple's Network Extension framework capabilities.
+
+## User Interface
+
+### Main Screen
+
+The main screen provides essential information:
+
+- **Connection Status**: 
+  - Unsecured (red) - Not connected
+  - Secured (green) - Connected to VPN
+  - Connecting (yellow) - Establishing connection
+- **Server Location**: Currently selected or connected server
+- **IP Address**: Your current public IP (shows VPN server IP when connected)
+- **Connect/Disconnect**: Large button to toggle connection
+
+### Server Selection
+
+Choose your VPN server location:
+
+- **Countries**: Browse all available countries
+- **Cities**: Select specific cities within countries
+- **Individual Servers**: Choose specific server (advanced)
+- **Custom Lists**: Create and manage lists of favorite servers
+- **Search**: Quick search for locations
+
+### Settings
+
+Access via the gear icon:
+
+#### VPN Settings
+- **WireGuard Port**: Automatic or specific port
+- **Obfuscation**: Enable/configure obfuscation methods
+- **Multihop**: Enable routing through two servers
+- **Quantum-Resistant**: Enable post-quantum cryptography
+- **DAITA**: Enable traffic analysis protection
+
+#### DNS Settings
+- **DNS Server**: Use VPN server DNS or custom
+- **Content Blockers**: 
+  - Block ads
+  - Block trackers
+  - Block malware
+  - Block gambling
+  - Block adult content
+  - Block social media
+
+#### Account
+- **Account Number**: Display and manage account
+- **Account Expiry**: Time remaining on account
+- **Device Name**: Name for this device in your account
+- **Log Out**: Remove account from device
+
+#### Advanced
+- **WireGuard MTU**: Custom MTU setting
+- **WireGuard Keys**: View and rotate keys
+- **Verbose Logging**: Enable detailed logs for troubleshooting
+
+## VPN On Demand
+
+iOS supports automatic VPN connection:
+
+### Configuration
+
+1. Open **Settings** app (iOS Settings, not Mullvad app)
+2. Navigate to **VPN**
+3. Tap the **ⓘ** next to Mullvad VPN
+4. Enable **Connect On Demand**
+
+### Behavior
+
+- **Auto-Connect**: VPN connects automatically when needed
+- **Network Changes**: Maintains connection across WiFi/cellular transitions
+- **Wake from Sleep**: Reconnects automatically
+
+<Info>
+  Connect On Demand is an iOS system setting, not a Mullvad app setting. Configure it in iOS Settings → VPN.
+</Info>
+
+## iCloud Keychain
+
+Account information can be stored securely:
+
+- **Secure Storage**: Account number stored in iOS Keychain
+- **iCloud Sync**: Optional sync across your iOS devices
+- **Biometric Protection**: Access protected by Face ID/Touch ID
+
+<Note>
+  To sync account across devices, ensure iCloud Keychain is enabled in iOS Settings → [Your Name] → iCloud → Keychain.
+</Note>
+
+## Permissions
+
+The app requires minimal permissions:
+
+- **VPN Configuration**: Required to create VPN profiles (requested on first connect)
+- **Network Access**: Basic permission for network operations
+- **Local Network** (Optional): For accessing devices on local network
+
+The app does not request:
+- Location
+- Contacts
+- Photos
+- Microphone
+- Camera
+- Or any other unnecessary permissions
+
+## Notifications
+
+The app uses notifications to inform you:
+
+- **Connection Status**: Notifies when connected/disconnected
+- **Key Rotation**: Notifies when WireGuard keys are rotated
+- **Account Expiry**: Warns when account is expiring
+- **Errors**: Alerts for connection or configuration errors
+
+**Configuration**: Enable/disable in iOS Settings → Mullvad VPN → Notifications
+
+## Cellular Data
+
+VPN works over both WiFi and cellular:
+
+- **Data Usage**: VPN adds ~5-10% overhead to data usage
+- **Cellular Toggle**: Can disable VPN on cellular in iOS settings
+- **Roaming**: Works normally when roaming (consider data costs)
+
+## Battery Impact
+
+The app is optimized for battery efficiency:
+
+- **Minimal Impact**: Network Extension framework is efficient
+- **WireGuard Protocol**: More efficient than older protocols like OpenVPN
+- **Background Activity**: Minimal when idle, only connection keepalives
+- **Typical Impact**: ~2-5% additional battery drain
+
+## Multi-Device Account Management
+
+Manage devices in your Mullvad account:
+
+### Device Limit
+- Maximum 5 devices per account
+- Each iOS device counts as one device
+
+### Device Management
+1. Open Mullvad VPN app
+2. Navigate to Settings → Account
+3. View current device and device count
+4. Use website to remove old devices: [mullvad.net/account](https://mullvad.net/account)
+
+### Device Names
+Customize device names for easy identification:
+1. Settings → Account → Device Name
+2. Enter descriptive name (e.g., "iPhone 15", "iPad Pro")
+
+## Logs and Problem Reports
+
+Submit logs for troubleshooting:
+
+### Enable Verbose Logging
+1. Settings → Advanced → Enable Verbose Logging
+2. Reproduce the issue
+3. Logs are collected in background
+
+### Send Problem Report
+1. Settings → Report a Problem
+2. Add description of the issue
+3. Tap "Send Report"
+4. Note the report ID provided
+5. Share report ID with Mullvad support if needed
+
+Logs are automatically deleted after 30 days.
+
+## Cached Relays
+
+The app caches server lists:
+
+- **Purpose**: Allows server selection without internet
+- **Update**: Automatically updated when connected
+- **Fallback**: Uses cached list if API unavailable
+- **Location**: Bundled with app at build time
+
+## Known Limitations
+
+### iOS Platform Limitations
+
+1. **Local Network Always Accessible**: Cannot be disabled due to iOS framework limitations
+2. **No Split Tunneling**: Network Extension framework doesn't support per-app VPN
+3. **No LWO**: Platform restrictions prevent implementation
+4. **System VPN Slot**: Only one VPN can be active at a time
+5. **Battery Usage**: VPN battery usage attributed to "VPN" not "Mullvad VPN" in iOS battery stats
+
+### Network Extension Limitations
+
+1. **Reconnection Delays**: iOS may delay reconnection in certain power-saving scenarios
+2. **Background Refresh**: Limited control over background refresh for server list updates
+3. **System Updates**: Major iOS updates may require VPN profile recreation
+
+## IPv6 Support
+
+The app fully supports IPv6:
+
+- **IPv6 Tunnels**: Full support for IPv6 traffic
+- **Dual Stack**: Works with both IPv4 and IPv6 networks
+- **IPv6 Leak Protection**: Prevents IPv6 leaks when connected
+
+## Troubleshooting
+
+### Cannot Connect
+
+1. **Check Internet**: Ensure device has internet connectivity
+2. **VPN Profile**: Delete and recreate VPN profile:
+   - Settings → VPN → ⓘ → Delete VPN
+   - Open Mullvad app and connect again
+3. **Network Changes**: Try switching between WiFi and cellular
+4. **Restart App**: Force close and reopen the app
+5. **Restart Device**: Sometimes required after iOS updates
+
+### Connection Drops
+
+1. **Enable Connect On Demand**: Settings → VPN → ⓘ → Connect On Demand
+2. **Check Account**: Ensure account has time remaining
+3. **Try Different Server**: Some servers may be temporarily overloaded
+4. **Disable Battery Optimization**: Settings → Battery → (none for VPN, but check Low Power Mode)
+5. **Obfuscation**: Enable if on restricted network
+
+### Slow Speeds
+
+1. **Try Different Server**: Choose server closer to your location
+2. **Disable DAITA**: Adds small overhead, disable if not needed
+3. **Check Local Network**: Test speed without VPN to isolate issue
+4. **Change Protocol Port**: Try automatic port selection
+5. **Cellular vs WiFi**: Compare speeds on both connection types
+
+### App Crashes
+
+1. **Update App**: Ensure latest version from App Store
+2. **Update iOS**: Some crashes fixed in newer iOS versions
+3. **Reinstall App**: Delete and reinstall from App Store
+4. **Report Problem**: Submit crash report through app
+
+### Cannot Access Local Devices
+
+Local network should always be accessible:
+
+1. **Verify Local Network Permission**: Settings → Mullvad VPN → Local Network
+2. **Restart Router**: Some routers need restart after VPN connection
+3. **Check IP Range**: Ensure local devices are on standard private IP ranges
+4. **Firewall Rules**: Check if local devices have firewall rules blocking VPN traffic
+
+### Key Rotation Issues
+
+1. **Manual Rotation**: Settings → Advanced → WireGuard Keys → Rotate Key
+2. **Account Check**: Ensure account is active and not expired
+3. **Network Connectivity**: Key rotation requires API access
+4. **Time/Date**: Ensure device time and date are correct
+
+## Advanced Topics
+
+### WireGuard Key Management
+
+- **Automatic Rotation**: Keys rotate automatically for security
+- **Manual Rotation**: Can manually rotate in Settings → Advanced
+- **Key Display**: Can view current public key in app
+- **Per-Device Keys**: Each device has its own WireGuard key pair
+
+### Custom MTU
+
+Adjust Maximum Transmission Unit:
+
+1. Settings → Advanced → WireGuard MTU
+2. Default: 1280 (recommended for most situations)
+3. Increase: Better performance on stable networks (up to 1420)
+4. Decrease: Better compatibility on problematic networks (down to 1280)
+
+### Port Selection
+
+Configure WireGuard port:
+
+- **Automatic** (Recommended): App selects port automatically
+- **Custom Port**: Choose specific port (useful for firewall rules)
+- **Port Range**: Mullvad supports ports 53, 51820, and 1024-65535
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Account Management" icon="user" href="/account/overview">
+    Manage your Mullvad account
+  </Card>
+  <Card title="Security Model" icon="shield" href="/architecture/security">
+    Understand iOS VPN security
+  </Card>
+  <Card title="Server Selection" icon="server" href="/essentials/servers">
+    Choose the optimal server
+  </Card>
+  <Card title="Settings Guide" icon="gear" href="/essentials/settings">
+    Configure advanced settings
+  </Card>
+</CardGroup>

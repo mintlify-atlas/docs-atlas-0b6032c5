@@ -1,0 +1,662 @@
+---
+title: Quantum-Resistant Tunnels
+description: Post-quantum cryptographic implementation for quantum-safe WireGuard tunnels using ML-KEM and HQC
+---
+
+Mullvad VPN implements quantum-resistant tunnels using post-quantum key encapsulation mechanisms (KEMs) to protect against future quantum computer attacks. This document details the cryptographic protocols, PSK derivation, and ephemeral peer negotiation process.
+
+## Overview
+
+Quantum-resistant tunnels add an additional layer of security to WireGuard by negotiating a pre-shared key (PSK) using quantum-safe KEMs. This PSK is mixed into WireGuard's cryptographic handshake, ensuring that even if quantum computers break the elliptic curve cryptography in the future, past traffic remains secure.
+
+### Key Features
+
+- **Post-Quantum KEMs**: ML-KEM-1024 (NIST standardized) and HQC-256 for hybrid security
+- **Ephemeral Peers**: Short-lived peers with unique PSKs for each tunnel session
+- **Multihop Support**: Independent PSKs for entry and exit peers in multihop configurations
+- **Automatic Negotiation**: Transparent PSK exchange over the tunnel before full activation
+
+### Code References
+
+- Ephemeral peer negotiation: `talpid-wireguard/src/ephemeral.rs`
+- KEM client implementation: `talpid-tunnel-config-client/src/lib.rs`
+- ML-KEM implementation: `talpid-tunnel-config-client/src/ml_kem.rs`
+- HQC implementation: `talpid-tunnel-config-client/src/hqc.rs`
+- Protocol definition: `talpid-tunnel-config-client/proto/ephemeralpeer.proto`
+
+## Cryptographic Primitives
+
+### ML-KEM-1024 (FIPS 203)
+
+**Algorithm**: Module-Lattice-Based Key-Encapsulation Mechanism
+
+**Standardization**: NIST FIPS 203 (formerly Kyber)
+
+**Implementation** (`ml_kem.rs`):
+
+```rust
+use ml_kem::MlKem1024;
+
+const ALGORITHM_NAME: &str = "ML-KEM-1024";
+const CIPHERTEXT_LEN: usize = 1568; // bytes
+
+pub struct Keypair {
+    encapsulation_key: ml_kem::kem::EncapsulationKey<MlKem1024Params>,
+    decapsulation_key: ml_kem::kem::DecapsulationKey<MlKem1024Params>,
+}
+
+pub fn keypair() -> Keypair {
+    let (decapsulation_key, encapsulation_key) = 
+        ml_kem::MlKem1024::generate(&mut rand::thread_rng());
+    Keypair { encapsulation_key, decapsulation_key }
+}
+```
+
+**Security Level**: NIST Level 5 (highest)
+- Provides 256-bit post-quantum security
+- Encapsulation key: 1568 bytes
+- Ciphertext: 1568 bytes
+- Shared secret: 32 bytes
+
+**Why ML-KEM-1024**:
+- NIST standardized (published August 2024)
+- Fast performance with small keys
+- No practical benefit to using lower security levels
+
+### HQC-256
+
+**Algorithm**: Hamming Quasi-Cyclic
+
+**Implementation** (`hqc.rs`):
+
+```rust
+use pqcrypto_hqc::hqc256;
+
+const ALGORITHM_NAME: &str = "HQC-256";
+
+pub struct Keypair {
+    public_key: hqc256::PublicKey,
+    secret_key: hqc256::SecretKey,
+}
+
+pub fn keypair() -> Keypair {
+    let (public_key, secret_key) = hqc256::keypair();
+    Keypair { public_key, secret_key }
+}
+
+impl Keypair {
+    pub fn decapsulate(&self, ciphertext_slice: &[u8]) -> Result<[u8; 32], Error> {
+        let ciphertext = hqc256::Ciphertext::from_bytes(ciphertext_slice)?;
+        let shared_secret = hqc256::decapsulate(&ciphertext, &self.secret_key);
+        
+        // HQC outputs 64 bytes, hash to 32 for WireGuard PSK
+        let output = Sha256::digest(shared_secret.as_bytes());
+        Ok(output.into())
+    }
+}
+```
+
+**Security Level**: 256-bit post-quantum security
+- Encapsulation key: 7245 bytes (larger than ML-KEM)
+- Ciphertext: 13909 bytes
+- Shared secret: 64 bytes (hashed to 32)
+
+**Why HQC-256**:
+- Code-based cryptography (different mathematical foundation than ML-KEM)
+- Provides defense-in-depth through algorithm diversity
+- NIST Round 4 candidate
+
+## PSK Derivation Protocol
+
+### KEM Combination via XOR
+
+The final WireGuard PSK is derived by XORing the shared secrets from both KEMs (`lib.rs:289-294`):
+
+```rust
+fn xor_assign(dst: &mut [u8; 32], src: &[u8; 32]) {
+    for (dst_byte, src_byte) in dst.iter_mut().zip(src.iter()) {
+        *dst_byte ^= src_byte;
+    }
+}
+
+// PSK derivation
+let mut psk_data = Box::new([0u8; 32]);
+
+// Mix ML-KEM shared secret
+let ml_kem_secret = ml_kem_keypair.decapsulate(ml_kem_ciphertext)?;
+xor_assign(&mut psk_data, &ml_kem_secret);
+
+// Mix HQC shared secret
+let hqc_secret = hqc_keypair.decapsulate(hqc_ciphertext)?;
+xor_assign(&mut psk_data, &hqc_secret);
+
+let psk = PresharedKey::from(psk_data);
+```
+
+**Security Rationale**:
+
+XOR mixing is secure because:
+- If either B or C is secret, A = B ⊕ C remains secret
+- Both B **and** C must be compromised to compute any bit in A
+- All involved KEMs must be broken before the PSK is revealed
+- WireGuard's HKDF uniformly distributes entropy regardless of input distribution
+
+From the protocol specification (`ephemeralpeer.proto:103-119`):
+
+> The PSK to be used in WireGuard's preshared-key field is computed by XORing the resulting
+> shared secrets of all the KEM algorithms. All currently supported and planned to be
+> supported algorithms output 32 bytes, so this is trivial.
+>
+> Since the PSK provided to WireGuard is directly fed into a HKDF, it is not important that
+> the entropy in the PSK is uniformly distributed. The actual keys used for encrypting the
+> data channel will have uniformly distributed entropy anyway, thanks to the HKDF.
+>
+> Mixing with XOR (A = B ^ C) is fine since nothing about A is revealed even if one of B or C
+> is known. Both B *and* C must be known to compute any bit in A.
+
+### Secret Zeroization
+
+Shared secrets are zeroized immediately after use (`lib.rs:194-213`):
+
+```rust
+// Decapsulate ML-KEM and mix into PSK
+{
+    let mut shared_secret = ml_kem_keypair.decapsulate(ml_kem_ciphertext)?;
+    xor_assign(&mut psk_data, &shared_secret);
+    
+    // Zero out the secret from stack
+    // (though compiler may still copy it around)
+    shared_secret.zeroize();
+}
+
+// Decapsulate HQC and mix into PSK
+{
+    let mut shared_secret = hqc_keypair.decapsulate(hqc_ciphertext)?;
+    xor_assign(&mut psk_data, &shared_secret);
+    shared_secret.zeroize();
+}
+```
+
+**Security Note** (`ml_kem.rs:31-35`):
+> Always inline in order to try to avoid potential copies of shared_secret to multiple places
+> on the stack. This is almost pointless as with optimization all bets are off regarding where
+> the shared secrets will end up in memory. In the future we can try to do better, by
+> cleaning the stack. But this is not trivial.
+
+## Ephemeral Peer Negotiation
+
+### Protocol Overview
+
+Quantum-resistant tunnels use ephemeral peers to avoid breaking existing tunnels during PSK negotiation:
+
+1. **Normal Peer Connects**: Client establishes tunnel with long-lived credentials
+2. **Generate Ephemeral Keys**: Client generates new WireGuard keypair and KEM keypairs
+3. **Request Exchange**: Client sends ephemeral public keys to server over tunnel
+4. **Server Response**: Server encapsulates secrets to client's KEM public keys
+5. **Derive PSK**: Client decapsulates ciphertexts and derives PSK via XOR
+6. **Switch to Ephemeral**: Client reconfigures tunnel with ephemeral key + PSK
+
+**Mutual Exclusivity**: Only one peer (normal or ephemeral) is active in WireGuard at a time. A handshake from the normal peer unloads the ephemeral peer and vice versa.
+
+### gRPC Service Definition
+
+The ephemeral peer service (`ephemeralpeer.proto`) defines:
+
+```protobuf
+service EphemeralPeer {
+  rpc RegisterPeerV1(EphemeralPeerRequestV1) returns (EphemeralPeerResponseV1) {}
+}
+
+message EphemeralPeerRequestV1 {
+  bytes wg_parent_pubkey = 1;          // Current tunnel public key
+  bytes wg_ephemeral_peer_pubkey = 2;  // New ephemeral public key
+  PostQuantumRequestV1 post_quantum = 3;
+  DaitaRequestV2 daita_v2 = 5;
+}
+
+message PostQuantumRequestV1 {
+  repeated KemPubkeyV1 kem_pubkeys = 1;
+}
+
+message KemPubkeyV1 {
+  string algorithm_name = 1;  // "ML-KEM-1024" or "HQC-256"
+  bytes key_data = 2;         // Encapsulation key
+}
+
+message EphemeralPeerResponseV1 {
+  PostQuantumResponseV1 post_quantum = 1;
+  DaitaResponseV2 daita = 2;
+}
+
+message PostQuantumResponseV1 {
+  repeated bytes ciphertexts = 1;  // Same order as kem_pubkeys
+}
+```
+
+### Client Implementation
+
+The negotiation client (`lib.rs:113-134`):
+
+```rust
+pub async fn request_ephemeral_peer(
+    service_address: Ipv4Addr,
+    parent_pubkey: PublicKey,
+    ephemeral_pubkey: PublicKey,
+    enable_post_quantum: bool,
+    enable_daita: bool,
+) -> Result<EphemeralPeer, Error> {
+    let client = connect_relay_config_client(service_address).await?;
+    request_ephemeral_peer_with(
+        client,
+        parent_pubkey,
+        ephemeral_pubkey,
+        enable_post_quantum,
+        enable_daita,
+    ).await
+}
+```
+
+**Generate Secrets** (`lib.rs:268-287`):
+
+```rust
+fn post_quantum_secrets() -> (PostQuantumRequestV1, (ml_kem::Keypair, hqc::Keypair)) {
+    let ml_kem_keypair = ml_kem::keypair();
+    let hqc_keypair = hqc::keypair();
+    
+    (
+        PostQuantumRequestV1 {
+            kem_pubkeys: vec![
+                KemPubkeyV1 {
+                    algorithm_name: ml_kem_keypair.algorithm_name().to_owned(),
+                    key_data: ml_kem_keypair.encapsulation_key(),
+                },
+                KemPubkeyV1 {
+                    algorithm_name: hqc_keypair.algorithm_name().to_owned(),
+                    key_data: hqc_keypair.encapsulation_key(),
+                },
+            ],
+        },
+        (ml_kem_keypair, hqc_keypair),
+    )
+}
+```
+
+### Service Configuration
+
+**Port**: 1337 (CONFIG_SERVICE_PORT)
+
+**Connection** (`lib.rs:296-317`):
+
+```rust
+async fn connect_relay_config_client(ip: Ipv4Addr) -> Result<RelayConfigService, Error> {
+    let endpoint = Endpoint::from_static("tcp://0.0.0.0:0");
+    let addr = SocketAddr::new(IpAddr::V4(ip), CONFIG_SERVICE_PORT);
+    
+    let connection = endpoint
+        .connect_with_connector(service_fn(move |_| async move {
+            let sock = socket::TcpSocket::new()?;
+            let stream = sock.connect(addr).await?;
+            let sniffer = socket_sniffer::SocketSniffer::new(stream);
+            Ok::<_, std::io::Error>(TokioIo::new(sniffer))
+        }))
+        .await?;
+    
+    Ok(RelayConfigService::new(connection))
+}
+```
+
+**Special Socket Configuration**: The socket uses a custom MSS (Maximum Segment Size) to avoid MTU issues during the handshake, since the tunnel MTU may not be optimal yet.
+
+### Timeout Configuration
+
+Timeout increases with retry attempts (`ephemeral.rs:21-23`):
+
+```rust
+const INITIAL_PSK_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(8);
+const MAX_PSK_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(48);
+const PSK_EXCHANGE_TIMEOUT_MULTIPLIER: u32 = 2;
+```
+
+Calculation (`ephemeral.rs:275-279`):
+
+```rust
+let timeout = std::cmp::min(
+    MAX_PSK_EXCHANGE_TIMEOUT,
+    INITIAL_PSK_EXCHANGE_TIMEOUT
+        .saturating_mul(PSK_EXCHANGE_TIMEOUT_MULTIPLIER.saturating_pow(retry_attempt)),
+);
+```
+
+**Timeout Progression**:
+- Attempt 0: 8 seconds
+- Attempt 1: 16 seconds
+- Attempt 2: 32 seconds
+- Attempt 3+: 48 seconds (capped)
+
+## Integration with WireGuard
+
+### Trigger Conditions
+
+Ephemeral peer negotiation is triggered when (`lib.rs:283`, `ephemeral.rs:100-108`):
+
+```rust
+if config.quantum_resistant || config.daita {
+    ephemeral::config_ephemeral_peers(
+        &tunnel,
+        &mut config,
+        retry_attempt,
+        obfuscation_mtu,
+        obfuscator.clone(),
+        ephemeral_obfs_sender,
+    ).await?;
+}
+```
+
+Both quantum-resistant and DAITA features require ephemeral peers.
+
+### Traffic Restrictions During Negotiation
+
+During ephemeral peer negotiation, tunnel traffic is restricted (`lib.rs:603-626`):
+
+```rust
+fn allowed_traffic_during_tunnel_config(config: &Config) -> AllowedTunnelTraffic {
+    if config.quantum_resistant || config.daita {
+        let config_endpoint = Endpoint::new(
+            config.ipv4_gateway,
+            CONFIG_SERVICE_PORT,  // Port 1337
+            TransportProtocol::Tcp,
+        );
+        
+        if config.is_multihop() {
+            // Allow config service + exit peer
+            AllowedTunnelTraffic::Two(
+                config_endpoint,
+                Endpoint::from_socket_address(
+                    config.exit_peer().endpoint,
+                    TransportProtocol::Udp,
+                ),
+            )
+        } else {
+            // Only config service
+            AllowedTunnelTraffic::One(config_endpoint)
+        }
+    } else {
+        AllowedTunnelTraffic::All
+    }
+}
+```
+
+After successful negotiation, all traffic is allowed (`lib.rs:628-631`).
+
+### Configuration Update
+
+After deriving the PSK, the tunnel configuration is updated (`ephemeral.rs:162-182`):
+
+```rust
+config.exit_peer_mut().psk = exit_ephemeral_peer.psk;
+config.tunnel.private_key = ephemeral_private_key;
+
+if config.daita {
+    config.entry_peer.constant_packet_size = true;
+}
+
+*config = reconfigure_tunnel(
+    tunnel,
+    config.clone(),
+    daita,
+    obfuscation_mtu,
+    obfuscator,
+    close_obfs_sender,
+).await?;
+```
+
+**Tunnel Reconfiguration** involves:
+1. Stopping obfuscation (if active)
+2. Restarting obfuscation with new config
+3. Calling `tunnel.set_config()` to apply new WireGuard parameters
+
+## Multihop Quantum-Resistant Tunnels
+
+### Dual PSK Negotiation
+
+In multihop mode, **two separate PSKs** are negotiated (`ephemeral.rs:126-160`):
+
+1. **Exit Peer PSK**: Negotiated first using exit relay's config service
+2. **Entry Peer PSK**: Negotiated second using entry relay's config service
+
+**Both peers use the same ephemeral WireGuard keypair but different PSKs.**
+
+### Negotiation Sequence
+
+```rust
+// 1. Generate ephemeral WireGuard keypair
+let ephemeral_private_key = PrivateKey::new_from_random();
+
+// 2. Request exit peer ephemeral config
+let exit_ephemeral_peer = request_ephemeral_peer(
+    retry_attempt,
+    config,
+    ephemeral_private_key.public_key(),
+    config.quantum_resistant,
+    exit_should_have_daita,
+).await?;
+
+if config.is_multihop() {
+    // 3. Temporarily configure tunnel to reach entry relay
+    let mut entry_tun_config = config.clone();
+    entry_tun_config.exit_peer = None;  // Single-hop to entry
+    entry_tun_config.entry_peer.allowed_ips.push(
+        IpNetwork::new(IpAddr::V4(config.ipv4_gateway), 32).unwrap()
+    );
+    
+    let entry_config = reconfigure_tunnel(
+        tunnel,
+        entry_tun_config,
+        None,
+        obfuscation_mtu,
+        obfuscator.clone(),
+        close_obfs_sender.clone(),
+    ).await?;
+    
+    // 4. Request entry peer ephemeral config over entry tunnel
+    let entry_ephemeral_peer = request_ephemeral_peer(
+        retry_attempt,
+        &entry_config,
+        ephemeral_private_key.public_key(),
+        config.quantum_resistant,
+        config.daita,
+    ).await?;
+    
+    // 5. Apply entry PSK
+    config.entry_peer.psk = entry_ephemeral_peer.psk;
+}
+
+// 6. Apply exit PSK and reconfigure to full multihop
+config.exit_peer_mut().psk = exit_ephemeral_peer.psk;
+config.tunnel.private_key = ephemeral_private_key;
+
+*config = reconfigure_tunnel(
+    tunnel,
+    config.clone(),
+    daita,
+    obfuscation_mtu,
+    obfuscator,
+    close_obfs_sender,
+).await?;
+```
+
+### Security Properties
+
+**Multihop + Quantum Resistance provides**:
+
+1. **Two Independent PSKs**: Entry and exit peers each have unique quantum-resistant PSKs
+2. **One Ephemeral Keypair**: Same ephemeral WireGuard key used with both peers
+3. **Nested Encryption**: Traffic is encrypted twice:
+   - Inner layer: Client ↔ Exit (with PSK₁)
+   - Outer layer: Client ↔ Entry (with PSK₂)
+
+**Threat Model**:
+- Attacker must break **both** quantum-resistant PSKs to decrypt traffic
+- Even if one relay is compromised, the other PSK protects the tunnel
+- Forward secrecy is maintained through ephemeral WireGuard keys
+
+## Windows-Specific Implementation
+
+### MTU Workaround
+
+Windows requires a temporary MTU reduction during ephemeral peer negotiation (`ephemeral.rs:26-60`):
+
+```rust
+#[cfg(windows)]
+pub async fn config_ephemeral_peers(
+    tunnel: &Arc<AsyncMutex<Option<TunnelType>>>,
+    config: &mut Config,
+    ...
+) -> Result<(), CloseMsg> {
+    let iface_name = {
+        let tunnel = tunnel.lock().await;
+        tunnel.as_ref().unwrap().get_interface_name()
+    };
+    
+    // Lower MTU temporarily for handshake reliability
+    log::trace!("Temporarily lowering tunnel MTU before ephemeral peer config");
+    try_set_ipv4_mtu(&iface_name, talpid_tunnel::MIN_IPV4_MTU);
+    
+    config_ephemeral_peers_inner(...).await?;
+    
+    // Restore normal MTU
+    log::trace!("Resetting tunnel MTU");
+    try_set_ipv4_mtu(&iface_name, config.mtu);
+    
+    Ok(())
+}
+
+fn try_set_ipv4_mtu(alias: &str, mtu: u16) {
+    use talpid_windows::net::*;
+    match luid_from_alias(alias) {
+        Ok(luid) => {
+            if let Err(error) = set_mtu(u32::from(mtu), luid, AddressFamily::Ipv4) {
+                log::error!("Failed to set tunnel interface MTU: {error}");
+            }
+        }
+        Err(error) => {
+            log::error!("Failed to obtain tunnel interface LUID: {error}")
+        }
+    }
+}
+```
+
+**Rationale**: Unix systems set MSS directly on TCP sockets, but this doesn't work on Windows, requiring an interface-level MTU change.
+
+## Performance Characteristics
+
+### Key Generation Timing
+
+Logged during negotiation (`lib.rs:146-149`):
+
+```rust
+let start = Instant::now();
+let (pq_request, kem_keypairs) = post_quantum_secrets();
+log::debug!(
+    "Generated quantum-resistant key exchange material in {} ms",
+    start.elapsed().as_millis()
+);
+```
+
+**Typical performance**:
+- ML-KEM-1024 keypair generation: &lt;1ms
+- HQC-256 keypair generation: ~5ms
+- Total: ~5-10ms
+
+### Network Overhead
+
+**Request Size**:
+- WireGuard public keys: 2 × 32 bytes = 64 bytes
+- ML-KEM-1024 encapsulation key: 1568 bytes
+- HQC-256 encapsulation key: 7245 bytes
+- Protobuf overhead: ~100 bytes
+- **Total**: ~9KB request
+
+**Response Size**:
+- ML-KEM-1024 ciphertext: 1568 bytes
+- HQC-256 ciphertext: 13909 bytes
+- DAITA configuration: ~500 bytes (if enabled)
+- Protobuf overhead: ~100 bytes
+- **Total**: ~16KB response
+
+**Round Trip**: One request/response for single-hop, two for multihop
+
+## Error Handling
+
+### Ephemeral Peer Errors
+
+```rust
+pub enum Error {
+    GrpcConnectError(tonic::transport::Error),
+    GrpcError(Box<tonic::Status>),
+    MissingCiphertexts,
+    InvalidCiphertextLength { algorithm: &'static str, actual: usize, expected: usize },
+    InvalidCiphertextCount { actual: usize },
+    MissingDaitaResponse,
+    ParseMaybenotMachines { reason: String },
+}
+```
+
+### Timeout Handling
+
+```rust
+let ephemeral = tokio::time::timeout(
+    timeout,
+    talpid_tunnel_config_client::request_ephemeral_peer(...),
+)
+.await
+.map_err(|_timeout_err| {
+    log::warn!("Timeout while negotiating ephemeral peer");
+    CloseMsg::EphemeralPeerNegotiationTimeout
+})?
+```
+
+**Recovery**: Timeouts are recoverable errors - the connection attempt will be retried with increased timeout.
+
+### Ciphertext Validation
+
+```rust
+let [ml_kem_ciphertext, hqc_ciphertext] = 
+    <&[Vec<u8>; 2]>::try_from(ciphertexts.as_slice())
+        .map_err(|_| Error::InvalidCiphertextCount {
+            actual: ciphertexts.len(),
+        })?;
+
+let shared_secret = ml_kem_keypair.decapsulate(ml_kem_ciphertext)
+    .map_err(|_| Error::InvalidCiphertextLength {
+        algorithm: "ML-KEM-1024",
+        actual: ml_kem_ciphertext.len(),
+        expected: CIPHERTEXT_LEN,
+    })?;
+```
+
+## Testing Example
+
+The repository includes a test example (`examples/psk-exchange.rs`):
+
+```rust
+let ephemeral_peer = talpid_tunnel_config_client::request_ephemeral_peer(
+    gateway_ip,
+    current_pubkey,
+    ephemeral_pubkey,
+    true,  // enable_post_quantum
+    false, // enable_daita
+)
+.await
+.expect("Failed to negotiate ephemeral peer");
+
+if let Some(psk) = ephemeral_peer.psk {
+    println!("Successfully negotiated PSK: {:?}", psk);
+}
+```
+
+## Related Documentation
+
+- [WireGuard Implementation](./wireguard.mdx) - Core tunnel implementation
+- [Obfuscation Protocols](./obfuscation-protocols.mdx) - Obfuscation layer that wraps quantum-resistant tunnels
+- Protocol Specification: `talpid-tunnel-config-client/proto/ephemeralpeer.proto`

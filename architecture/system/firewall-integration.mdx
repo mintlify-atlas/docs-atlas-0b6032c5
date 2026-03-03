@@ -1,0 +1,371 @@
+---
+title: Firewall Integration
+description: Platform-specific firewall implementations using WFP, PF, and nftables
+---
+
+Mullvad VPN integrates directly with the native firewall on each desktop platform to enforce strict security policies. All firewall changes are applied as atomic transactions, ensuring no time window exists with inconsistent or invalid rules.
+
+## Overview
+
+The firewall integration is platform-specific:
+
+- **Windows**: Windows Filtering Platform (WFP)
+- **macOS**: Packet Filter (PF)
+- **Linux**: nftables
+- **Android/iOS**: VPN Service API / Network Extension (no direct firewall access)
+
+## Windows - WFP Integration
+
+### Implementation
+
+The Windows firewall is implemented in `windows/winfw/` and uses the Windows Filtering Platform (WFP) API.
+
+Source: `talpid-core/src/firewall/windows/mod.rs`
+
+### Architecture
+
+`winfw` organizes filters into sublayers with specific weights:
+
+#### Baseline Sublayer
+
+- **Highest weight** to process all traffic first
+- Contains permit-filters (highest weight within sublayer)
+- Contains blocking filters (lowest weight within sublayer)
+- Permit-filters "lift" matched traffic to next sublayer
+- Blocking verdict is final - matched traffic is dropped
+
+#### Specialized Sublayers
+
+- **DNS sublayer**: Filters DNS traffic (port 53)
+- **Endpoint sublayers**: Handle relay and API endpoints
+- **All weighted slightly lower than baseline**
+
+Each sublayer uses the same pattern:
+- High-weighted permit-filters for whitelisted traffic
+- Low-weighted blocking filters as catch-all
+
+#### Persistent Sublayer
+
+When the daemon exits while a blocking policy should remain:
+- **Created with highest possible weight**
+- Contains blocking filters only
+- **Persists across BFE restarts and reboots**
+- Ensures traffic blocked until daemon reinitializes
+- Active before BFE service starts during boot
+
+Source: `windows/winfw/README.md`
+
+### Key Functions
+
+```cpp
+// Initialize WFP session
+winfw::initialize()
+
+// Apply firewall policies
+winfw::apply_policy_connecting()  // During connection
+winfw::apply_policy_connected()   // When connected
+winfw::apply_policy_blocked()     // In error/blocked state
+
+// Cleanup
+winfw::deinit(cleanup_policy)     // Remove or persist rules
+```
+
+### Hyper-V Leak Protection
+
+Windows implements additional rules to prevent Hyper-V (WSL) traffic leaks:
+
+- Uses WMI to enumerate Hyper-V virtual switches
+- Adds blocking rules for virtual adapters
+- Can be disabled via `TALPID_FIREWALL_BLOCK_HYPERV=0`
+
+Source: `talpid-core/src/firewall/windows/hyperv.rs`
+
+### Process Restrictions
+
+WFP rules restrict which processes can communicate with the VPN endpoint:
+
+- **Connecting state**: Only `mullvad-daemon.exe` or root processes
+- **Connected state**: Only tunnel interface or root processes
+- Uses binary path matching on Windows
+- Prevents unprivileged programs from fingerprinting endpoint
+
+Source: `docs/security.md:174-182`
+
+## macOS - PF Integration
+
+### Implementation
+
+The macOS firewall uses the Packet Filter (PF) system.
+
+Source: `talpid-core/src/firewall/macos.rs`
+
+### Architecture
+
+#### Anchor System
+
+- Creates anchor named `mullvad`
+- Anchor contains filter rules, NAT rules, and scrub rules
+- Atomic rule updates via `pfctl::AnchorChange`
+- Preserves/restores PF enabled state
+
+#### Rule Types
+
+**Filter Rules:**
+- Pass rules (allow traffic)
+- Drop rules (block with `return` or `drop` action)
+- All rules can have `quick` flag for immediate verdict
+
+**NAT Rules (macOS 14.6-15.0 workaround):**
+- Force traffic through VPN interface
+- Fixes Apple services bypassing tunnel
+- Masquerade non-loopback, non-LAN traffic to tunnel IP
+- Disabled on unaffected macOS versions
+
+Source: `talpid-core/src/firewall/macos.rs:26-45`
+
+**Scrub Rules:**
+- Reassemble packet fragments
+- Ensures complete transport headers for filtering
+
+#### State Management
+
+PF retains connection states even after rules removed:
+
+```rust
+flush_states(&policy, is_toggling_split_tunneling)
+```
+
+- Clears connection states on policy changes
+- Preserves VPN endpoint connections
+- Preserves in-tunnel allowed traffic during multihop
+- Preserves LAN traffic when allowed
+- Flushes all states when toggling split tunneling
+
+Source: `talpid-core/src/firewall/macos.rs:102-213`
+
+### Process Restrictions
+
+PF rules restrict endpoint access to root user:
+
+- Uses `user` condition matching UID 0
+- Only root processes can reach relay endpoints in blocking states
+- Prevents unprivileged leak attempts
+
+Source: `talpid-core/src/firewall/macos.rs:582-598`
+
+### Debugging
+
+Set `TALPID_FIREWALL_DEBUG` to enable rule logging:
+
+- `pass` - Log allowing rules only
+- `drop` - Log blocking rules only  
+- `all` - Log all rules
+- Rules logged to `pflog0` interface
+- View with: `tcpdump -netttti pflog0`
+
+Source: `talpid-core/src/firewall/macos.rs:60-69`
+
+## Linux - nftables Integration
+
+### Implementation
+
+The Linux firewall uses nftables with the `nftnl` library.
+
+Source: `talpid-core/src/firewall/linux.rs`
+
+### Architecture
+
+#### Table and Chains
+
+Creates an inet table named `mullvad`:
+
+| Chain | Hook | Priority | Policy | Purpose |
+|-------|------|----------|--------|----------|
+| `prerouting` | PreRouting | `NF_IP_PRI_CONNTRACK + 1` | Accept | Mark incoming relay traffic |
+| `input` | In | 0 | Drop | Filter incoming packets |
+| `output` | Out | 0 | Drop | Filter outgoing packets |
+| `forward` | Forward | 0 | Drop | Filter forwarded packets |
+| `mangle` | Out | `NF_IP_PRI_MANGLE` | Accept | Mark split tunnel traffic |
+| `nat` | PostRouting | `NF_IP_PRI_NAT_SRC` | Accept | Masquerade split traffic |
+
+Source: `talpid-core/src/firewall/linux.rs:286-315`
+
+#### Atomic Updates
+
+All rule changes are atomic:
+
+1. Create table (if not exists)
+2. Delete table (clear existing rules)
+3. Re-create table with new chains
+4. Add all rules in single batch
+5. Verify table exists in kernel
+
+Source: `talpid-core/src/firewall/linux.rs:145-151`
+
+### Firewall Mark
+
+Uses firewall mark `fwmark` for traffic classification:
+
+- **Marked packets** can bypass tunnel (split tunneling)
+- Applied to relay endpoint traffic
+- Applied to split-tunneled process traffic
+- **Prevents reverse path filter issues**
+
+Source: `talpid-core/src/firewall/linux.rs:104-106`
+
+### Process Restrictions
+
+nftables rules restrict endpoint access:
+
+- Uses `meta skuid` to match root user (UID 0)
+- Alternatively uses `meta mark` matching `fwmark`
+- Only root or marked traffic reaches endpoints in blocking states
+
+Source: `talpid-core/src/firewall/linux.rs:786-811`
+
+### Kernel Parameters
+
+When establishing tunnel, sets kernel parameters:
+
+#### src_valid_mark
+
+```
+net.ipv4.conf.all.src_valid_mark = 1
+```
+
+- Enables fwmark consideration for reverse path filtering
+- Prevents strict `rp_filter` from blocking relay traffic
+- Disable via `TALPID_FIREWALL_DONT_SET_SRC_VALID_MARK=1`
+
+Source: `docs/README.md:168-174`
+
+#### arp_ignore
+
+```
+net.ipv4.conf.all.arp_ignore = 2
+```
+
+- Reply to ARP only for IPs on receiving interface
+- **Prevents ARP probing of in-tunnel IP** (CVE-2019-14899 mitigation)
+- Disable via `TALPID_FIREWALL_DONT_SET_ARP_IGNORE=1`
+
+Source: `talpid-core/src/firewall/linux.rs:186-196`
+
+### Debugging
+
+Set `TALPID_FIREWALL_DEBUG=1` to add packet counters:
+
+```bash
+# View rules with counters
+sudo nft list ruleset
+
+# View only Mullvad table
+sudo nft list table inet mullvad
+```
+
+Source: `talpid-core/src/firewall/linux.rs:73-77`
+
+## Common Firewall Rules
+
+All platforms implement these rules:
+
+### Always Allowed
+
+1. **Loopback traffic** - Always permitted
+2. **DHCP client** - UDP 68→67 (v4), UDP 546→547 (v6)
+3. **DHCP server** (when Allow LAN) - UDP 67→68 (v4)
+4. **NDP (Neighbor Discovery Protocol)**:
+   - Router solicitation (type 133)
+   - Router advertisement (type 134) from `fe80::/10`
+   - Redirect (type 137) from `fe80::/10`
+   - Neighbor solicitation (type 135)
+   - Neighbor advertisement (type 136)
+
+Source: `docs/security.md:87-106`
+
+### LAN Access (when enabled)
+
+Allows traffic to/from:
+
+**Private networks:**
+- `10.0.0.0/8`
+- `172.16.0.0/12`
+- `192.168.0.0/16`
+- `169.254.0.0/16` (link-local IPv4)
+- `fe80::/10` (link-local IPv6)
+- `fc00::/7` (ULA)
+
+**Multicast:**
+- `224.0.0.0/24` (local IPv4)
+- `239.0.0.0/8` (admin IPv4)
+- `255.255.255.255/32` (broadcast)
+- `ff01::/16` through `ff05::/16` (IPv6 multicast)
+
+Source: `docs/security.md:107-127`
+
+### Policy-Specific Rules
+
+#### Connecting State
+
+- Allow tunnel endpoint (IP:port:protocol)
+- Allow API endpoint (root only)
+- Block all DNS except to relay (if multihop)
+- Allow in-tunnel traffic (if created)
+- Allow LAN (if enabled)
+
+Source: `docs/security.md:166-189`
+
+#### Connected State  
+
+- Allow tunnel endpoint
+- Allow DNS to relay or custom servers only
+- Block all other DNS
+- Allow all tunnel interface traffic
+- Allow LAN (if enabled)
+
+Source: `docs/security.md:194-208`
+
+#### Blocked State
+
+- Allow API endpoint (root only, if specified)
+- Block all DNS
+- Allow LAN (if enabled)
+
+Source: `docs/security.md:221-234`
+
+## API Access
+
+All platforms allow API traffic in all states:
+
+- **Connected**: API traffic goes through tunnel
+- **Other states**: API bypasses firewall
+- **Windows**: Only `mullvad-daemon.exe` and problem report tool
+- **macOS/Linux**: Only root processes
+
+Uses TLS 1.3 with certificate pinning to Let's Encrypt root.
+
+Source: `docs/security.md:133-144`
+
+## Mobile Platforms
+
+### Android
+
+Uses VPN Service API instead of firewall:
+
+- Routes `0.0.0.0/0` and `::/0` through app
+- Applies in connecting, connected, and error states
+- System "Block connections without VPN" provides OS-level enforcement
+- **Exempt traffic**: connectivity checks, NTP, hotspot
+
+Source: `docs/security.md:32-62`
+
+### iOS
+
+Uses Network Extension packet tunnel:
+
+- Packet tunnel process handles all traffic
+- Routing rules force all traffic through tunnel
+- Delegates to `wireguard-go` for tun interface
+- Local network always accessible
+
+Source: `docs/security.md:71-76`

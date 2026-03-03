@@ -1,0 +1,393 @@
+---
+title: "mullvad lan"
+description: "Configure local network access when connected to VPN"
+---
+
+## Overview
+
+The `mullvad lan` command controls whether you can access devices on your local network (LAN) while connected to the VPN.
+
+## Syntax
+
+```bash
+mullvad lan <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display the current local network sharing setting:
+
+```bash
+mullvad lan get
+```
+
+### set
+
+Change the local network access setting:
+
+```bash
+mullvad lan set <allow|block>
+```
+
+**Arguments:**
+- `allow` - Allow access to local network devices
+- `block` - Block access to local network devices
+
+## Behavior
+
+### Allow LAN Access
+
+When set to `allow`:
+
+- ✓ Can access local network devices (printers, NAS, etc.)
+- ✓ Local traffic bypasses VPN tunnel
+- ✓ Can access router admin interface
+- ✓ Network shares and services accessible
+- ✓ Local multiplayer gaming works
+- Internet traffic still routes through VPN
+
+### Block LAN Access
+
+When set to `block`:
+
+- All traffic routes through VPN, including local
+- Cannot access local network devices
+- Maximum isolation from local network
+- Better security on untrusted networks
+
+## Examples
+
+### Check Current Setting
+
+```bash
+mullvad lan get
+```
+
+Output when allowed:
+```
+Local network sharing setting: allow
+```
+
+Output when blocked:
+```
+Local network sharing setting: block
+```
+
+### Allow Local Network Access
+
+```bash
+mullvad lan set allow
+```
+
+Output:
+```
+Changed local network sharing setting
+```
+
+### Block Local Network Access
+
+```bash
+mullvad lan set block
+```
+
+Output:
+```
+Changed local network sharing setting
+```
+
+## Use Cases
+
+### Home Network Access
+
+Allow LAN access to use home devices:
+
+```bash
+mullvad lan set allow
+```
+
+Access:
+- Network printers
+- Network-attached storage (NAS)
+- Smart home devices
+- Media servers (Plex, Jellyfin)
+- Local web services
+- Router configuration interface
+
+### Public WiFi Security
+
+Block LAN access on untrusted networks:
+
+```bash
+mullvad lan set block
+```
+
+Use this on:
+- Coffee shop WiFi
+- Hotel networks
+- Airport WiFi
+- Public hotspots
+- Any untrusted network
+
+### Maximum Isolation
+
+Block all local network access:
+
+```bash
+mullvad lan set block
+mullvad lockdown-mode set on
+```
+
+Provides:
+- Complete network isolation
+- Maximum security
+- No local network exposure
+
+## Local Network Detection
+
+Mullvad automatically detects local network ranges:
+
+### Private IP Ranges
+
+- `10.0.0.0/8` - Class A private network
+- `172.16.0.0/12` - Class B private network
+- `192.168.0.0/16` - Class C private network
+- `169.254.0.0/16` - Link-local addresses
+- `fc00::/7` - IPv6 unique local addresses
+- `fe80::/10` - IPv6 link-local addresses
+
+### What Counts as Local
+
+Local network traffic includes:
+
+- Same subnet communication
+- Router/gateway access
+- Broadcast traffic
+- Multicast traffic
+- mDNS/Bonjour discovery
+
+## Common Local Services
+
+### Network Printers
+
+Access network printers:
+
+```bash
+mullvad lan set allow
+```
+
+Then print normally to network printers like `192.168.1.100`.
+
+### Network Storage (NAS)
+
+Access NAS devices:
+
+```bash
+mullvad lan set allow
+```
+
+Mount SMB/CIFS shares:
+```bash
+# Linux/macOS
+mount -t cifs //192.168.1.50/share /mnt/nas
+
+# macOS Finder
+smb://192.168.1.50/share
+
+# Windows
+\\192.168.1.50\share
+```
+
+### Router Admin Interface
+
+Access router configuration:
+
+```bash
+mullvad lan set allow
+```
+
+Then browse to `http://192.168.1.1` (or your router's IP).
+
+### Smart Home Devices
+
+Control smart home devices:
+
+```bash
+mullvad lan set allow
+```
+
+Access:
+- Smart lights (Philips Hue, etc.)
+- Smart thermostats
+- Security cameras
+- Home automation hubs
+
+### Local Web Development
+
+Access development servers:
+
+```bash
+mullvad lan set allow
+```
+
+Connect to:
+- `localhost` (always works)
+- Local machine: `192.168.1.X`
+- Other development machines on LAN
+
+## Security Considerations
+
+### When to Allow LAN
+
+✓ Safe to allow on:
+- Home network
+- Trusted work network
+- Private networks you control
+- When you need local device access
+
+### When to Block LAN
+
+✓ Should block on:
+- Public WiFi
+- Hotel networks
+- Airport WiFi
+- Coffee shops
+- Any untrusted network
+- When maximum isolation is needed
+
+### Security Trade-offs
+
+**Allow LAN:**
+- Pros: Access to local devices, convenience
+- Cons: Exposed to local network threats
+
+**Block LAN:**
+- Pros: Maximum isolation, better security
+- Cons: Can't access local devices
+
+## Interaction with Other Settings
+
+### Lockdown Mode
+
+LAN setting works independently of lockdown mode:
+
+```bash
+# Block everything when disconnected, allow LAN when connected
+mullvad lockdown-mode set on
+mullvad lan set allow
+```
+
+Result:
+- When disconnected: All traffic blocked (lockdown)
+- When connected: Internet through VPN, LAN accessible
+
+### Split Tunneling
+
+LAN setting is separate from split tunneling:
+
+- LAN setting: Controls local network access
+- Split tunneling: Controls which apps use VPN
+
+Both can be configured independently.
+
+## Dynamic Configuration
+
+You can change the setting while connected:
+
+```bash
+# Connected to VPN with blocked LAN
+mullvad lan set allow
+
+# Immediately allows local network access
+# No reconnection needed
+```
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect to VPN
+- [lockdown](/cli/commands/lockdown) - Configure traffic blocking when disconnected
+- [split-tunnel](/cli/commands/split-tunnel) - Configure app-level split tunneling
+- [status](/cli/commands/status) - Check connection status
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Setting updated successfully |
+| 1 | Failed to update setting |
+
+## Notes
+
+- LAN setting is persistent across restarts
+- Changes take effect immediately (no reconnection needed)
+- Setting is stored in Mullvad daemon configuration
+- Works on all platforms (Linux, macOS, Windows)
+- Only affects private IP ranges
+- Internet traffic always routes through VPN when connected
+
+## Troubleshooting
+
+### Can't Access Local Devices
+
+If you can't access local network devices:
+
+1. Check LAN setting:
+   ```bash
+   mullvad lan get
+   ```
+
+2. Allow LAN access:
+   ```bash
+   mullvad lan set allow
+   ```
+
+3. Verify you're on the same network:
+   ```bash
+   ip addr  # Linux
+   ifconfig # macOS
+   ipconfig # Windows
+   ```
+
+4. Check device IP is in private range
+
+### Localhost Still Works
+
+Loopback traffic (`127.0.0.1`, `::1`) always works regardless of LAN setting:
+
+- `localhost` is always accessible
+- Local development servers on `127.0.0.1` work
+- Docker containers on host network work
+
+## Recommended Configurations
+
+### Home Network
+
+```bash
+mullvad lan set allow
+mullvad auto-connect set on
+```
+
+Result: Automatic VPN with local device access
+
+### Public WiFi
+
+```bash
+mullvad lan set block
+mullvad connect
+```
+
+Result: Maximum isolation on untrusted networks
+
+### Balanced Security
+
+```bash
+mullvad lan set allow
+mullvad lockdown-mode set on
+```
+
+Result: Local access when connected, blocked when disconnected
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/lan.rs`

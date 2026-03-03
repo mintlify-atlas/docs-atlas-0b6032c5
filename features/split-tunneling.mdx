@@ -1,0 +1,570 @@
+---
+title: 'Split Tunneling'
+description: 'Exclude specific applications or processes from the VPN tunnel'
+---
+
+## Overview
+
+Split tunneling allows you to **exclude specific applications** from the VPN tunnel. Excluded apps communicate with the internet as if Mullvad VPN were disconnected or not running, while all other apps remain protected by the VPN.
+
+This is useful for:
+- **Local network services**: Printers, file shares, media servers
+- **Banking apps**: Some require your real IP address
+- **Performance-critical apps**: Gaming, video calls that benefit from direct routing
+- **Testing**: Comparing behavior inside vs. outside the tunnel
+
+<Note>
+Split tunneling is available on Windows, Linux, macOS, and Android. It is **not available on iOS** due to platform limitations.
+</Note>
+
+## How Split Tunneling Works
+
+### Normal VPN Connection (No Split Tunneling)
+
+```
+┌────────────────────────────────────────────────┐
+│              All Applications                   │
+│  Browser, Email, Games, Local Apps, etc.      │
+└────────────────────────────────────────────────┘
+                      │
+                      ▼
+        ┌───────────────────────┐
+        │   VPN Tunnel       │ ────► Internet
+        └───────────────────────┘
+```
+
+### With Split Tunneling Enabled
+
+```
+┌──────────────────────────┐   ┌──────────────────────┐
+│  Normal Apps          │   │  Excluded Apps      │
+│  Browser, Email, etc. │   │  Banking, Printer   │
+└──────────────────────────┘   └──────────────────────┘
+          │                           │
+          ▼                           ▼
+  ┌────────────────┐          Direct Connection
+  │  VPN Tunnel   │ ─► Internet
+  └────────────────┘          (Real IP)
+   (VPN IP)
+```
+
+### Key Concepts
+
+- **Excluded app**: Traffic goes **outside** the VPN tunnel (uses your real IP)
+- **Included app**: Traffic goes **inside** the VPN tunnel (default for all apps)
+- **Split tunneling state**: Feature can be enabled/disabled globally
+
+## Platform Implementations
+
+Split tunneling works differently on each platform:
+
+<Tabs>
+  <Tab title="Windows">
+    ### Path-Based Exclusion
+    
+    - Exclude apps by **executable path**
+    - Uses split tunnel driver (`mullvad-split-tunnel.sys`)
+    - Excludes app and all child processes
+    
+    **Example:**
+    ```
+    C:\Program Files\App\app.exe
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ### Path-Based Exclusion
+    
+    - Exclude apps by **bundle path**
+    - Requires **Full Disk Access** permission
+    - Uses kernel-level process filtering
+    
+    **Example:**
+    ```
+    /Applications/App.app
+    ```
+    
+    <Warning>
+    **Limitation**: WebKit-based browsers (Safari) cannot be excluded due to IPC architecture.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Linux">
+    ### Process-Based Exclusion
+    
+    - Exclude by **Process ID (PID)**
+    - Uses cgroups v2 for network isolation
+    - PIDs must be added manually after app starts
+    
+    **Helper command**: `mullvad-exclude` launcher
+    
+    **Example:**
+    ```bash
+    mullvad-exclude firefox
+    ```
+  </Tab>
+  
+  <Tab title="Android">
+    ### App-Based Exclusion
+    
+    - Exclude by **package name**
+    - Uses Android VPN Service API
+    - Excluded apps fully bypass VPN
+    
+    **Example:**
+    ```
+    com.bank.mobile
+    ```
+  </Tab>
+</Tabs>
+
+## Enabling Split Tunneling
+
+### Windows & macOS
+
+#### Using the GUI
+
+<Steps>
+  <Step title="Open Split Tunneling Settings">
+    Navigate to **Settings** → **VPN settings** → **Split tunneling**
+  </Step>
+  
+  <Step title="Enable Split Tunneling">
+    Toggle **Split tunneling** to **On**
+  </Step>
+  
+  <Step title="Add Applications">
+    - Click **Add application**
+    - Browse to the application's executable or bundle
+    - Select the app to exclude
+  </Step>
+  
+  <Step title="Manage Excluded Apps">
+    - View list of excluded applications
+    - Remove apps by clicking the remove button
+    - Apps take effect immediately (no reconnection needed)
+  </Step>
+</Steps>
+
+#### Using the CLI (Windows)
+
+```bash
+# Enable split tunneling
+mullvad split-tunnel set on
+
+# Add application
+mullvad split-tunnel app add "C:\Program Files\App\app.exe"
+
+# Remove application
+mullvad split-tunnel app remove "C:\Program Files\App\app.exe"
+
+# List excluded apps
+mullvad split-tunnel get
+
+# List currently excluded processes
+mullvad split-tunnel get --list-processes
+
+# Clear all excluded apps
+mullvad split-tunnel app clear
+
+# Disable split tunneling
+mullvad split-tunnel set off
+```
+
+#### Using the CLI (macOS)
+
+```bash
+# Enable split tunneling
+mullvad split-tunnel set on
+
+# Add application bundle
+mullvad split-tunnel app add /Applications/App.app
+
+# Remove application
+mullvad split-tunnel app remove /Applications/App.app
+
+# View excluded apps and processes
+mullvad split-tunnel get --list-processes
+```
+
+### Linux
+
+#### Using the mullvad-exclude Helper
+
+```bash
+# Launch app outside the tunnel
+mullvad-exclude firefox
+
+mullvad-exclude /usr/bin/transmission-gtk
+
+# Launch with arguments
+mullvad-exclude steam steam://rungameid/123456
+```
+
+#### Using the CLI Directly
+
+```bash
+# Start an app and get its PID
+firefox &
+FIREFOX_PID=$!
+
+# Exclude the process
+mullvad split-tunnel add $FIREFOX_PID
+
+# List excluded processes
+mullvad split-tunnel list
+
+# Stop excluding
+mullvad split-tunnel delete $FIREFOX_PID
+
+# Clear all
+mullvad split-tunnel clear
+```
+
+<Info>
+On Linux, use `mullvad-exclude` launcher for simplicity. It handles PID management automatically.
+</Info>
+
+### Android
+
+#### Using the App
+
+<Steps>
+  <Step title="Open Settings">
+    Tap ☰ menu → **Settings**
+  </Step>
+  
+  <Step title="Open Split Tunneling">
+    Navigate to **Split tunneling**
+  </Step>
+  
+  <Step title="Enable and Select Apps">
+    - Toggle **Split tunneling** **On**
+    - Tap **Apps** to see installed applications
+    - Select apps to exclude from VPN
+  </Step>
+  
+  <Step title="Apply Changes">
+    Changes take effect immediately
+  </Step>
+</Steps>
+
+## DNS Behavior
+
+DNS handling with split tunneling is complex:
+
+### Desktop (Windows, Linux, macOS)
+
+| DNS Setting | Normal Apps | Excluded Apps |
+|-------------|-------------|---------------|
+| **Default DNS** (relay) | In tunnel | In tunnel* |
+| **Public custom DNS** (e.g., 8.8.8.8) | In tunnel | In tunnel* |
+| **Private custom DNS** (e.g., 10.0.1.1) | LAN | LAN |
+
+*DNS requests originate from system DNS service (not the excluded app directly), so they're sent through the tunnel.
+
+<Warning>
+**Important**: On desktop, excluded apps use the same DNS as normal apps (tunnel DNS) because DNS requests go through system services, not directly from applications.
+</Warning>
+
+### Android
+
+| DNS Setting | Normal Apps | Excluded Apps |
+|-------------|-------------|---------------|
+| **Default DNS** | In tunnel (relay) | Outside tunnel (system DNS) |
+| **Public custom DNS** | In tunnel | Outside tunnel (system DNS) |
+| **Private custom DNS** | LAN (with local network sharing) | Outside tunnel (system DNS) |
+
+Android properly routes DNS for excluded apps outside the tunnel.
+
+## Process Inheritance
+
+### Parent-Child Relationships
+
+Excluded status is **inherited by child processes**:
+
+```
+Excluded App (Parent)
+  └──► Child Process 1 (Excluded)
+       └──► Child Process 2 (Excluded)
+```
+
+**Implications:**
+- Subprocesses automatically excluded
+- Browser tabs, helper processes included
+- Launched applications may inherit status
+
+### Process Tracking (Windows)
+
+On Windows, you can see excluded processes:
+
+```bash
+mullvad split-tunnel get --list-processes
+```
+
+Output:
+```
+PID     Type        Name
+1234               app.exe
+5678    subprocess child.exe
+```
+
+- **No marker**: Directly excluded (executable path matches)
+- **subprocess**: Inherited exclusion from parent
+
+## Limitations and Known Issues
+
+### General Limitations
+
+<Warning>
+**Split tunneling has important limitations:**
+
+1. **DNS may leak**: Desktop DNS requests might go through tunnel
+2. **Process inheritance**: Child processes automatically excluded
+3. **IPC complications**: Opening links/files may not behave as expected
+4. **No iOS support**: iOS does not allow split tunneling
+</Warning>
+
+### macOS Specific
+
+- **WebKit browsers**: Safari, WebKit-based apps cannot be excluded
+- **Full Disk Access required**: Must grant permission in System Preferences
+- **IPC limitations**: Apps using multiple processes may not work correctly
+
+### Linux Specific
+
+- **PID-based**: Must manage process IDs manually
+- **No persistent list**: Excluded PIDs lost on reboot
+- **Process lifetime**: Exclusion removed when process exits
+
+### Android Specific
+
+- **System apps**: Some system apps cannot be excluded
+- **Split VPN**: OS may show "Split VPN" warning
+
+### Firewall Behavior
+
+During connection transitions ([connecting](/security/kill-switch), [error](/security/kill-switch) states), excluded apps:
+
+- **Desktop**: May have connectivity issues (firewall blocks non-tunnel traffic)
+- **Android**: Should maintain connectivity (VPN Service API)
+
+## Security Considerations
+
+### What Split Tunneling Exposes
+
+<Warning>
+**Excluded apps:**
+- Use your **real IP address** (not VPN IP)
+- Traffic is **not encrypted by the VPN**
+- Can be monitored by ISP, network administrators
+- May reveal your location and identity
+- DNS requests may still go through tunnel (desktop)
+</Warning>
+
+### Use Cases to Avoid
+
+❌ **Do NOT exclude:**
+- Privacy-critical applications
+- Browsers for anonymous browsing
+- Torrent clients (use VPN for safety)
+- Apps accessing sensitive data
+
+### Safe Use Cases
+
+✅ **Safe to exclude:**
+- Local network applications (printer, NAS)
+- Banking apps requiring real IP
+- Gaming clients for better latency
+- Video conferencing for better quality
+- Speed test tools
+
+## Compatibility
+
+Split tunneling works with:
+
+- ✅ [WireGuard protocol](/features/wireguard)
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [Multihop](/features/multihop)
+- ✅ [DAITA](/features/daita)
+- ✅ [Obfuscation protocols](/features/obfuscation)
+- ✅ [Custom DNS](/features/custom-dns)
+- ✅ [Content blockers](/features/content-blockers)
+- ✅ [Local network access](/features/local-network-access)
+
+All features can be used simultaneously without conflicts.
+
+## Troubleshooting
+
+### App Still Using VPN
+
+If excluded app appears to use VPN:
+
+1. **Verify exclusion** (Windows/macOS):
+   ```bash
+   mullvad split-tunnel get
+   ```
+
+2. **Check process list**:
+   ```bash
+   mullvad split-tunnel get --list-processes
+   ```
+
+3. **Restart application**: Close and reopen excluded app
+
+4. **Check correct path**: Ensure exact executable path is excluded
+
+### App Not Working When Excluded
+
+If excluded app has connectivity issues:
+
+1. **Check if tunnel is connected**: Ensure VPN is active
+
+2. **Firewall blocking**: During connection transitions, firewall may block
+
+3. **Try including again**: Remove from exclusion list
+
+4. **Check DNS**: App may require specific DNS configuration
+
+### Linux: mullvad-exclude Not Working
+
+```bash
+# Check if mullvad-exclude is in PATH
+which mullvad-exclude
+
+# If not found, use full path
+/usr/bin/mullvad-exclude firefox
+
+# Verify cgroups v2
+mount | grep cgroup2
+```
+
+### macOS: Permission Denied
+
+If you get permission errors:
+
+1. Grant **Full Disk Access**:
+   - Open **System Preferences** → **Security & Privacy**
+   - Click **Privacy** tab
+   - Select **Full Disk Access**
+   - Add Mullvad VPN app
+
+2. Restart Mullvad VPN
+
+3. Try excluding app again
+
+### Windows: Driver Issues
+
+```bash
+# Check split tunnel driver status
+sc query mullvad-split-tunnel
+
+# If driver not running, reinstall Mullvad VPN
+```
+
+## Performance Impact
+
+Split tunneling has minimal performance impact:
+
+- **Excluded apps**: Direct routing (no VPN overhead)
+- **Normal apps**: Standard VPN performance
+- **System overhead**: Negligible (path/PID filtering)
+
+## Best Practices
+
+### Application Selection
+
+1. **Only exclude when necessary**: Minimize excluded apps for privacy
+2. **Document exclusions**: Keep note of why each app is excluded
+3. **Review regularly**: Remove apps no longer needed
+4. **Test functionality**: Verify apps work as expected
+
+### Security Hygiene
+
+<Tabs>
+  <Tab title="High Privacy">
+    Minimize exclusions:
+    ```bash
+    # Only exclude absolutely necessary apps
+    mullvad split-tunnel app add "C:\Local\Printer.exe"
+    ```
+  </Tab>
+  
+  <Tab title="Balanced">
+    Exclude local services and performance-critical apps:
+    ```bash
+    # Local network
+    mullvad split-tunnel app add "C:\Network\FileShare.exe"
+    
+    # Gaming (latency-sensitive)
+    mullvad split-tunnel app add "C:\Games\Game.exe"
+    ```
+  </Tab>
+  
+  <Tab title="Convenience">
+    Exclude multiple apps for usability:
+    ```bash
+    # Banking, local services, games, video calls
+    # (Accept reduced privacy for excluded apps)
+    ```
+  </Tab>
+</Tabs>
+
+### Testing
+
+Verify split tunneling works correctly:
+
+```bash
+# 1. Check IP from normal browser (should show VPN IP)
+curl https://am.i.mullvad.net/ip
+
+# 2. Check IP from excluded app (should show real IP)
+# Launch app with mullvad-exclude (Linux) or after adding to exclusions
+```
+
+## Related Features
+
+- [Local Network Access](/features/local-network-access) - Allow LAN without split tunneling
+- [Custom DNS](/features/custom-dns) - DNS behavior with split tunneling
+- [Kill Switch](/security/kill-switch) - Firewall behavior during transitions
+- [WireGuard Protocol](/features/wireguard) - Base VPN protocol
+
+## Technical Details
+
+### Implementation
+
+**Windows**: Windows Filtering Platform (WFP) driver
+- Driver file: `mullvad-split-tunnel.sys`
+- Service: `mullvad-split-tunnel`
+- Path-based filtering at kernel level
+
+**macOS**: Packet Filter (PF) integration
+- Process-based rules
+- Requires Full Disk Access for process inspection
+- PID tracking in user space
+
+**Linux**: cgroups v2 network controller
+- Cgroup path: `/sys/fs/cgroup/mullvad-exclusions`
+- PID-based exclusion
+- Fallback to v1 net_cls on older systems
+
+**Android**: VPN Service API
+- `disallowApp()` method
+- Per-package exclusion
+- Native Android support
+
+### Environment Variables (Linux)
+
+```bash
+# Override cgroup2 filesystem path
+export TALPID_CGROUP2_FS=/custom/path
+
+# Override net_cls mount directory (cgroup v1)
+export TALPID_NET_CLS_MOUNT_DIR=/custom/mount
+```
+
+## Further Reading
+
+- [Split Tunneling Documentation (Source)](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/split-tunneling.md)
+- [Linux cgroups v2 Documentation](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
+- [Android VPN Service API](https://developer.android.com/reference/android/net/VpnService)

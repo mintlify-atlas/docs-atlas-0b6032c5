@@ -1,0 +1,305 @@
+---
+title: File Paths
+description: File system locations used by Mullvad VPN daemon, CLI, and GUI applications
+---
+
+## Overview
+
+Mullvad VPN uses various directories across your system for storing settings, logs, cache data, and runtime files. This guide documents all file paths used by the application.
+
+<Note>
+All directory paths are defined in the `mullvad-paths` crate and can be customized using environment variables.
+</Note>
+
+## Daemon Paths
+
+### Settings Directory
+
+Stores the daemon's configuration files and persistent settings.
+
+| Platform | Default Path |
+|----------|-------------|
+| Linux | `/etc/mullvad-vpn/` |
+| macOS | `/etc/mullvad-vpn/` |
+| Windows | `%LOCALAPPDATA%\Mullvad VPN\` |
+| Android | `getFilesDir()` |
+
+<Note>
+On Windows, when running as a system service, `%LOCALAPPDATA%` expands to:
+`C:\Windows\system32\config\systemprofile\AppData\Local`
+</Note>
+
+**Environment Variable:** `MULLVAD_SETTINGS_DIR`
+
+```bash
+# Linux/macOS
+export MULLVAD_SETTINGS_DIR=/custom/settings/path
+
+# Windows
+setx MULLVAD_SETTINGS_DIR "C:\Custom\Settings\Path" /m
+```
+
+### Log Directory
+
+Stores daemon and application log files.
+
+| Platform | Default Path |
+|----------|-------------|
+| Linux | `/var/log/mullvad-vpn/` (+ systemd) |
+| macOS | `/var/log/mullvad-vpn/` |
+| Windows | `C:\ProgramData\Mullvad VPN\` |
+| Android | `getFilesDir()` |
+
+**Environment Variable:** `MULLVAD_LOG_DIR`
+
+```bash
+# Linux/macOS
+export MULLVAD_LOG_DIR=/custom/logs/path
+
+# Windows
+setx MULLVAD_LOG_DIR "C:\Custom\Logs\Path" /m
+```
+
+<Note>
+On Linux, logs are also available through systemd:
+```bash
+journalctl -u mullvad-daemon.service
+```
+</Note>
+
+### Cache Directory
+
+Stores temporary data such as relay lists and account information.
+
+| Platform | Default Path |
+|----------|-------------|
+| Linux | `/var/cache/mullvad-vpn/` |
+| macOS | `/Library/Caches/mullvad-vpn/` |
+| Windows | `C:\ProgramData\Mullvad VPN\cache` |
+| Android | `getCacheDir()` |
+
+**Environment Variable:** `MULLVAD_CACHE_DIR`
+
+```bash
+# Linux/macOS
+export MULLVAD_CACHE_DIR=/custom/cache/path
+
+# Windows
+setx MULLVAD_CACHE_DIR "C:\Custom\Cache\Path" /m
+```
+
+### RPC Socket Path
+
+The management interface socket used by the CLI and GUI to communicate with the daemon.
+
+| Platform | Default Path |
+|----------|-------------|
+| Linux | `/var/run/mullvad-vpn` |
+| macOS | `/var/run/mullvad-vpn` |
+| Windows | `//./pipe/Mullvad VPN` |
+| Android | `getNoBackupFilesDir()` |
+
+**Environment Variable:** `MULLVAD_RPC_SOCKET_PATH`
+
+```bash
+# Linux/macOS
+export MULLVAD_RPC_SOCKET_PATH=/custom/socket/path
+
+# Windows
+setx MULLVAD_RPC_SOCKET_PATH "\\\\.\\pipe\\CustomPipe" /m
+```
+
+<Note>
+On Windows, the RPC socket uses a named pipe instead of a Unix socket.
+</Note>
+
+## Desktop Application Paths
+
+The Electron-based GUI application stores user-specific settings separately from the daemon.
+
+### GUI Settings File
+
+Stores GUI preferences and window state.
+
+| Platform | Path |
+|----------|------|
+| Linux | `$XDG_CONFIG_HOME/Mullvad VPN/gui_settings.json` |
+| macOS | `~/Library/Application Support/Mullvad VPN/gui_settings.json` |
+| Windows | `%LOCALAPPDATA%\Mullvad VPN\gui_settings.json` |
+| Android | Available in `logcat` |
+
+<Note>
+On Linux, if `$XDG_CONFIG_HOME` is not set, it defaults to `~/.config`.
+</Note>
+
+The GUI settings file location is defined in:
+`desktop/packages/mullvad-vpn/src/main/gui-settings.ts`
+
+## Path Hierarchy
+
+### Linux
+
+```
+/etc/mullvad-vpn/           # Settings
+├── settings.json
+└── ...
+
+/var/log/mullvad-vpn/       # Logs
+├── daemon.log
+└── ...
+
+/var/cache/mullvad-vpn/     # Cache
+├── relays.json
+└── ...
+
+/var/run/                   # Runtime
+└── mullvad-vpn             # RPC socket
+
+~/.config/Mullvad VPN/      # GUI settings
+└── gui_settings.json
+```
+
+### macOS
+
+```
+/etc/mullvad-vpn/                              # Settings
+├── settings.json
+└── ...
+
+/var/log/mullvad-vpn/                          # Logs
+├── daemon.log
+└── ...
+
+/Library/Caches/mullvad-vpn/                   # Cache
+├── relays.json
+└── ...
+
+/var/run/                                      # Runtime
+└── mullvad-vpn                                # RPC socket
+
+~/Library/Application Support/Mullvad VPN/     # GUI settings
+└── gui_settings.json
+```
+
+### Windows
+
+```
+C:\Windows\system32\config\systemprofile\AppData\Local\Mullvad VPN\
+├── settings.json           # Settings
+└── ...
+
+C:\ProgramData\Mullvad VPN\
+├── daemon.log              # Logs
+├── cache\                  # Cache
+│   ├── relays.json
+│   └── ...
+└── ...
+
+\\\.\pipe\Mullvad VPN        # RPC named pipe
+
+%LOCALAPPDATA%\Mullvad VPN\
+└── gui_settings.json       # GUI settings
+```
+
+## Permissions
+
+### Unix Systems (Linux/macOS)
+
+The daemon creates directories with specific permissions to ensure security:
+
+- **Settings directory:** Root-owned, mode `0700` (owner read/write/execute only)
+- **Log directory:** Root-owned, readable by all users for transparency
+- **Cache directory:** Root-owned, readable and executable by all users
+- **RPC socket:** Accessible by all users by default (can be restricted with `MULLVAD_MANAGEMENT_SOCKET_GROUP`)
+
+### Windows
+
+On Windows, the daemon sets ACLs (Access Control Lists) to ensure:
+
+- **Administrators:** Full access to all directories
+- **Authenticated Users:** Read-only access to appropriate directories
+- **SYSTEM:** Full access as the service runs under the SYSTEM account
+
+## Cleaning Up
+
+To remove all Mullvad VPN data from your system:
+
+<Tabs>
+  <Tab title="Linux">
+    ```bash
+    # Stop the daemon
+    sudo systemctl stop mullvad-daemon
+    
+    # Remove all data
+    sudo rm -rf /etc/mullvad-vpn
+    sudo rm -rf /var/log/mullvad-vpn
+    sudo rm -rf /var/cache/mullvad-vpn
+    rm -rf ~/.config/"Mullvad VPN"
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    # Stop the daemon
+    launchctl unload -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+    
+    # Remove all data
+    sudo rm -rf /etc/mullvad-vpn
+    sudo rm -rf /var/log/mullvad-vpn
+    sudo rm -rf /Library/Caches/mullvad-vpn
+    rm -rf ~/Library/Application\ Support/"Mullvad VPN"
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```powershell
+    # Stop the service
+    sc.exe stop mullvadvpn
+    
+    # Remove data (run as Administrator)
+    Remove-Item -Recurse -Force "C:\Windows\system32\config\systemprofile\AppData\Local\Mullvad VPN"
+    Remove-Item -Recurse -Force "C:\ProgramData\Mullvad VPN"
+    Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Mullvad VPN"
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Removing these directories will delete all settings, logs, and cached data. You will need to reconfigure the app and log in again.
+</Warning>
+
+## Troubleshooting
+
+### Permission Denied Errors
+
+If you encounter permission errors:
+
+1. Ensure the daemon is running as root/SYSTEM
+2. Check directory ownership and permissions
+3. On Linux/macOS, verify SELinux or AppArmor policies aren't blocking access
+
+### Custom Paths Not Working
+
+If custom environment variables aren't being respected:
+
+1. Verify the environment variable is set for the daemon process, not just your user session
+2. Restart the daemon after setting environment variables
+3. Check daemon logs for path-related errors
+
+### Disk Space Issues
+
+If logs or cache are consuming too much space:
+
+```bash
+# Check directory sizes
+du -sh /var/log/mullvad-vpn
+du -sh /var/cache/mullvad-vpn
+
+# Safely remove old logs (daemon will recreate)
+sudo systemctl stop mullvad-daemon
+sudo rm /var/log/mullvad-vpn/*.log.old
+sudo systemctl start mullvad-daemon
+```
+
+## Related Resources
+
+- [Environment Variables](/cli/configuration/environment-variables) - Configure file paths and daemon behavior
+- [Settings Management](/cli/configuration/settings) - Understanding the settings directory

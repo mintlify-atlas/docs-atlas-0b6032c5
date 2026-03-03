@@ -1,0 +1,261 @@
+---
+title: "mullvad lockdown-mode"
+description: "Control network blocking when VPN is disconnected"
+---
+
+## Overview
+
+The `mullvad lockdown-mode` command controls whether to block all network traffic when the VPN is disconnected. This provides a kill switch functionality to prevent unprotected connections.
+
+## Syntax
+
+```bash
+mullvad lockdown-mode <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display the current lockdown mode setting:
+
+```bash
+mullvad lockdown-mode get
+```
+
+### set
+
+Change the lockdown mode setting:
+
+```bash
+mullvad lockdown-mode set <on|off>
+```
+
+**Arguments:**
+- `on` - Enable lockdown mode (block traffic when disconnected)
+- `off` - Disable lockdown mode (allow traffic when disconnected)
+
+## Behavior
+
+### Lockdown Mode ON
+
+When lockdown mode is enabled:
+
+- ✓ All network traffic is blocked when VPN is disconnected
+- ✓ Prevents accidental IP address leaks
+- ✓ Acts as a kill switch for VPN connection
+- ✓ Only Mullvad daemon traffic is allowed (for reconnection)
+- ✓ Local network access depends on [lan settings](/cli/commands/lan)
+
+### Lockdown Mode OFF
+
+When lockdown mode is disabled:
+
+- Network traffic is allowed when VPN is disconnected
+- Your real IP address is exposed when not connected
+- Normal internet access when VPN is off
+
+## Examples
+
+### Check Current Setting
+
+```bash
+mullvad lockdown-mode get
+```
+
+Output when enabled:
+```
+Block traffic when the VPN is disconnected: on
+```
+
+Output when disabled:
+```
+Block traffic when the VPN is disconnected: off
+```
+
+### Enable Lockdown Mode
+
+```bash
+mullvad lockdown-mode set on
+```
+
+Output:
+```
+Changed lockdown mode setting
+```
+
+### Disable Lockdown Mode
+
+```bash
+mullvad lockdown-mode set off
+```
+
+Output:
+```
+Changed lockdown mode setting
+```
+
+## Use Cases
+
+### Maximum Privacy Protection
+
+Enable lockdown mode to ensure you never accidentally leak your IP:
+
+```bash
+mullvad lockdown-mode set on
+mullvad auto-connect set on
+```
+
+This combination:
+- Automatically connects on startup
+- Blocks all traffic if VPN disconnects
+- Provides continuous VPN protection
+
+### Flexible Usage
+
+Disable lockdown mode for flexibility:
+
+```bash
+mullvad lockdown-mode set off
+```
+
+Use this when:
+- You need internet access without VPN occasionally
+- You want to manually control VPN connection
+- Testing or troubleshooting network issues
+
+### Emergency Internet Access
+
+If locked out of internet with lockdown mode enabled:
+
+```bash
+# Option 1: Connect to VPN
+mullvad connect
+
+# Option 2: Disable lockdown mode
+mullvad lockdown-mode set off
+```
+
+## Network Blocking Details
+
+### What Gets Blocked
+
+With lockdown mode enabled and VPN disconnected:
+
+- All outbound internet traffic
+- All inbound internet traffic
+- DNS requests to non-VPN servers
+- Applications cannot access the internet
+
+### What Stays Allowed
+
+Even with lockdown mode enabled:
+
+- Mullvad daemon can connect to Mullvad API
+- Local network access (if [lan setting](/cli/commands/lan) allows)
+- Loopback traffic (localhost)
+
+### Exception: Local Network
+
+Local network access depends on your [lan configuration](/cli/commands/lan):
+
+```bash
+# Allow local network even with lockdown mode
+mullvad lan set allow
+
+# Block local network too
+mullvad lan set block
+```
+
+## Interaction with Other Settings
+
+### Auto-Connect
+
+Lockdown mode works well with auto-connect:
+
+```bash
+mullvad lockdown-mode set on
+mullvad auto-connect set on
+```
+
+Result:
+- VPN connects automatically on startup
+- Traffic blocked until connection succeeds
+- Reconnects automatically if connection drops
+
+### Split Tunneling
+
+Lockdown mode affects split tunneling:
+
+- Excluded processes are also blocked when lockdown mode is active and VPN is disconnected
+- To allow excluded processes internet access, disable lockdown mode
+
+## Comparison with Kill Switch
+
+Lockdown mode is Mullvad's implementation of a VPN kill switch:
+
+| Feature | Lockdown Mode |
+|---------|---------------|
+| Blocks traffic when disconnected | ✓ |
+| Prevents IP leaks | ✓ |
+| Allows VPN reconnection | ✓ |
+| Configurable | ✓ |
+| Works across reboots | ✓ |
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect to VPN
+- [disconnect](/cli/commands/disconnect) - Disconnect from VPN
+- [auto-connect](/cli/commands/auto-connect) - Configure automatic connection
+- [lan](/cli/commands/lan) - Configure local network access
+- [status](/cli/commands/status) - Check connection status
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Setting updated successfully |
+| 1 | Failed to update setting |
+
+## Notes
+
+- Lockdown mode is persistent across restarts
+- The setting is stored in Mullvad daemon configuration
+- Lockdown mode is enforced by firewall rules
+- Local network access is controlled separately via [lan command](/cli/commands/lan)
+- Mullvad daemon always has network access to reconnect
+
+## Troubleshooting
+
+### No Internet Access
+
+If you have no internet access:
+
+1. Check lockdown mode status:
+   ```bash
+   mullvad lockdown-mode get
+   ```
+
+2. Check VPN status:
+   ```bash
+   mullvad status
+   ```
+
+3. Either connect to VPN or disable lockdown mode:
+   ```bash
+   mullvad connect
+   # or
+   mullvad lockdown-mode set off
+   ```
+
+### Can't Access Local Network
+
+If local network is blocked:
+
+```bash
+mullvad lan set allow
+```
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/lockdown.rs`

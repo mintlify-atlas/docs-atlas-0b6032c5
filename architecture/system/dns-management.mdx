@@ -1,0 +1,534 @@
+---
+title: DNS Management
+description: DNS configuration methods across Windows, Linux, macOS, and mobile platforms
+---
+
+Mullvad VPN manages system DNS settings to ensure DNS queries do not leak outside the VPN tunnel. The implementation varies by platform and can automatically detect or be manually configured.
+
+## Overview
+
+DNS management ensures:
+
+- DNS requests only go to approved servers (relay or custom DNS)
+- No DNS leaks outside the tunnel
+- Automatic restoration of original DNS settings
+- Platform-specific integration with system services
+
+Source: `talpid-dns/src/lib.rs`
+
+## DNS Configuration Types
+
+### Default DNS
+
+Uses the VPN relay server (default gateway) as resolver:
+
+```rust
+ResolvedDnsConfig {
+    tunnel_config: [relay_gateway_ip],
+    non_tunnel_config: [],
+}
+```
+
+Source: `talpid-dns/src/lib.rs:71-82`
+
+### Custom DNS
+
+**Tunnel config**: DNS servers accessible through the tunnel
+
+**Non-tunnel config**: DNS servers accessible on non-tunnel interfaces (typically private IPs)
+
+Source: `talpid-dns/src/lib.rs:44-67`
+
+## Platform Selection
+
+The daemon automatically selects the appropriate DNS method, or it can be forced:
+
+```bash
+# Set specific method
+export TALPID_DNS_MODULE=method_name
+```
+
+Source: `docs/README.md:182-196`
+
+## Windows DNS Methods
+
+### Available Methods
+
+Windows tries methods in this order (when auto-detecting):
+
+1. **iphlpapi** - IP Helper API (default)
+2. **netsh** - `netsh` command-line tool
+3. **tcpip** - Registry TCP/IP parameters
+
+Source: `talpid-dns/src/windows/mod.rs:34-46`
+
+### 1. iphlpapi Method
+
+**Primary method** using `SetInterfaceDnsSettings` from IP Helper API:
+
+```rust
+TALPID_DNS_MODULE=iphlpapi
+```
+
+**Implementation:**
+
+- Calls Windows API directly
+- Sets DNS servers per interface
+- Fastest and most reliable
+- **Requires Windows 10+**
+
+Source: `talpid-dns/src/windows/iphlpapi.rs`
+
+### 2. netsh Method
+
+**Fallback** using `netsh interface ipv4/ipv6 set dnsservers`:
+
+```rust
+TALPID_DNS_MODULE=netsh
+```
+
+**Implementation:**
+
+- Spawns `netsh.exe` process
+- Configures via command-line
+- Works on older Windows versions
+- Slower than API approach
+
+**Commands used:**
+
+```batch
+netsh interface ipv4 set dnsservers "interface" static 1.2.3.4 primary
+netsh interface ipv6 set dnsservers "interface" static fd00::1 primary
+```
+
+Source: `talpid-dns/src/windows/netsh.rs`
+
+### 3. tcpip Method
+
+**Registry-based** method:
+
+```rust
+TALPID_DNS_MODULE=tcpip
+```
+
+**Implementation:**
+
+- Modifies `HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{GUID}`
+- Sets `NameServer` and `NameServer6` registry values
+- Most compatible but least reliable
+- Requires service restart for changes to take effect
+
+Source: `talpid-dns/src/windows/tcpip.rs`
+
+### DNS Flushing
+
+Windows caches DNS responses. The daemon uses `DnsFlushResolverCache` from `dnsapi.dll` to clear cache when DNS servers change.
+
+Source: `talpid-dns/src/windows/dnsapi.rs`
+
+## Linux DNS Methods  
+
+### Available Methods
+
+Linux automatically detects the best method:
+
+1. **systemd-resolved** (via D-Bus)
+2. **NetworkManager** (via D-Bus)
+3. **resolvconf** (program)
+4. **static-file** (`/etc/resolv.conf`)
+
+Source: `talpid-dns/src/linux/mod.rs:116-141`
+
+### 1. systemd-resolved (Preferred)
+
+**Primary method** on systemd-based systems:
+
+```rust
+TALPID_DNS_MODULE=systemd
+```
+
+**Implementation:**
+
+- Uses D-Bus to communicate with `systemd-resolved`
+- Calls `SetLinkDNS` method on interface
+- Sets per-interface DNS servers
+- Automatic when resolved is running
+
+**D-Bus methods used:**
+
+```
+org.freedesktop.resolve1.Manager.SetLinkDNS(interface_index, servers)
+org.freedesktop.resolve1.Manager.RevertLink(interface_index)
+```
+
+Source: `talpid-dns/src/linux/systemd_resolved.rs`
+
+### 2. NetworkManager
+
+**Alternative** for NetworkManager-managed systems:
+
+```rust
+TALPID_DNS_MODULE=network-manager
+```
+
+**Implementation:**
+
+- Uses D-Bus to communicate with NetworkManager
+- Modifies DNS configuration per connection
+- Used when systemd-resolved unavailable
+
+**When used:**
+
+```rust
+pub fn will_use_nm() -> bool {
+    SystemdResolved::new().is_err() && NetworkManager::new().is_ok()
+}
+```
+
+Source: `talpid-dns/src/linux/network_manager.rs`
+
+### 3. resolvconf Program
+
+**Compatibility** method using `resolvconf` tool:
+
+```rust
+TALPID_DNS_MODULE=resolvconf
+```
+
+**Implementation:**
+
+- Executes `/sbin/resolvconf` binary
+- Writes DNS config via stdin
+- Standard on Debian-based systems
+
+**Commands used:**
+
+```bash
+echo "nameserver 1.2.3.4" | resolvconf -a interface.mullvad
+resolvconf -d interface.mullvad
+```
+
+Source: `talpid-dns/src/linux/resolvconf.rs`
+
+### 4. Static resolv.conf
+
+**Fallback** directly modifying `/etc/resolv.conf`:
+
+```rust
+TALPID_DNS_MODULE=static-file
+```
+
+**Implementation:**
+
+- Backs up original `/etc/resolv.conf`
+- Writes new file with `nameserver` entries
+- Restores backup on reset
+- **Last resort** when no other method works
+
+**File format:**
+
+```
+# Generated by Mullvad VPN
+nameserver 1.2.3.4
+nameserver fd00::1
+```
+
+Source: `talpid-dns/src/linux/static_resolv_conf.rs`
+
+### Routing Considerations
+
+On Linux, DNS requests to custom non-tunnel servers require routing:
+
+- Route manager adds routes to DNS servers
+- Ensures traffic doesn't go through tunnel
+- Only for private IP ranges
+
+Source: `talpid-dns/src/linux/systemd_resolved.rs`
+
+## macOS DNS Management
+
+### Implementation
+
+MacOS uses System Configuration framework:
+
+```rust
+impl DnsMonitor {
+    fn set(&mut self, interface: &str, config: ResolvedDnsConfig)
+}
+```
+
+**Methods:**
+
+1. **Set DNS** via `SCDynamicStoreSetValue`
+2. **Configure per interface** using `State:/Network/Service/{service}/DNS`
+3. **Set search domains** (if applicable)
+4. **Priority ordering** ensures tunnel interface used first
+
+Source: `talpid-dns/src/macos.rs`
+
+### Local DNS Resolver
+
+macOS runs a local DNS proxy by default at `127.0.0.1:53`:
+
+**Behavior:**
+
+- Forwards queries to configured upstream servers
+- Can be disabled: `TALPID_DISABLE_LOCAL_DNS_RESOLVER=1`
+- May cache AAAA queries aggressively
+
+**AAAA Filtering:**
+
+- App filters AAAA queries when IPv6 disabled
+- Prevents IPv6 DNS leaks
+- Force disable: `TALPID_NEVER_FILTER_AAAA_QUERIES=1`
+
+Source: `docs/README.md:197-200`
+
+### System Configuration Keys
+
+macOS stores DNS configuration in dynamic store:
+
+```
+State:/Network/Service/{service_id}/DNS
+├── ServerAddresses: [1.2.3.4, ...]
+├── SearchDomains: []
+└── SupplementalMatchDomains: []
+```
+
+## Android DNS Management
+
+### Implementation
+
+Android uses VPN Service API:
+
+```kotlin
+VpnService.Builder.addDnsServer(InetAddress)
+```
+
+**Characteristics:**
+
+- Sets DNS servers for VPN interface
+- System routes DNS through VPN automatically
+- No direct DNS configuration needed
+- **Exempt traffic** (connectivity checks) bypasses DNS settings
+
+Source: `talpid-dns/src/android.rs`
+
+### Split Tunneling
+
+Excluded apps use system DNS:
+
+- Not routed through VPN
+- Use DHCP or manually configured DNS
+- Behave as if VPN disconnected
+
+Source: `docs/split-tunneling.md:63-73`
+
+## iOS DNS Management
+
+### Implementation
+
+iOS uses Network Extension:
+
+```swift
+NETunnelProviderProtocol.dnsSettings = NEDNSSettings(servers: [...])
+```
+
+**Characteristics:**
+
+- Sets DNS servers for tunnel
+- System enforces DNS routing
+- Cannot be bypassed by apps
+- Local network DNS accessible
+
+Source: `docs/security.md:71-76`
+
+## DNS in Firewall States
+
+### Disconnected State
+
+**Lockdown mode disabled:**
+- Uses system default DNS (ISP or DHCP)
+- No restrictions applied
+
+**Lockdown mode enabled:**
+- All DNS blocked
+- Behaves like Error state
+
+Source: `docs/security.md:146-163`
+
+### Connecting State
+
+- **All DNS blocked** via firewall
+- Exception: relay endpoint (if on port 53)
+- Prevents leaks during setup
+
+Source: `docs/security.md:166-189`
+
+### Connected State  
+
+**Default DNS:**
+- DNS to relay server only
+- Blocked on non-tunnel interfaces
+
+**Custom DNS (tunnel):**
+- DNS to specified servers through tunnel
+- All other DNS blocked
+
+**Custom DNS (non-tunnel/private):**
+- DNS to private IPs on non-tunnel interfaces
+- Example: `192.168.1.1` for local DNS
+
+Source: `docs/security.md:194-208`
+
+### Error State
+
+- All DNS blocked
+- API access exception (for daemon)
+- Prevents all leaks
+
+Source: `docs/security.md:221-238`
+
+## DNS Configuration Flow
+
+### Setting DNS
+
+1. Daemon receives tunnel config
+2. Resolves DNS config (default or custom)
+3. DnsMonitor applies platform-specific method
+4. Firewall rules enforce DNS restrictions
+5. Monitors for external changes (platform-dependent)
+
+### Restoring DNS
+
+1. Daemon receives disconnect request
+2. Firewall rules removed
+3. DnsMonitor restores original settings
+4. System DNS behavior returns to normal
+
+## Implementation Details
+
+### DnsMonitor Interface
+
+Platform-agnostic interface:
+
+```rust
+pub trait DnsMonitorT {
+    fn new() -> Result<Self, Self::Error>;
+    fn set(&mut self, interface: &str, config: ResolvedDnsConfig) -> Result<(), Self::Error>;
+    fn reset(&mut self) -> Result<(), Self::Error>;
+    fn reset_before_interface_removal(&mut self) -> Result<(), Self::Error>;
+}
+```
+
+Source: `talpid-dns/src/lib.rs:211-226`
+
+### State Management
+
+**Initialization:**
+
+```rust
+let mut dns_monitor = DnsMonitor::new()?;
+```
+
+**Set DNS:**
+
+```rust
+let config = DnsConfig::from_addresses(
+    &[tunnel_dns],     // Through tunnel
+    &[non_tunnel_dns]  // Outside tunnel (private IPs)
+);
+let resolved = config.resolve(&default_gateway);
+dns_monitor.set(interface, resolved)?;
+```
+
+**Reset:**
+
+```rust
+// Before removing interface
+dns_monitor.reset_before_interface_removal()?;
+
+// Or after interface removed  
+dns_monitor.reset()?;
+```
+
+## Environment Variables
+
+### All Platforms
+
+```bash
+# Force specific DNS method
+TALPID_DNS_MODULE=method_name
+```
+
+### macOS Only
+
+```bash
+# Disable local DNS proxy
+TALPID_DISABLE_LOCAL_DNS_RESOLVER=1
+
+# Never filter AAAA queries
+TALPID_NEVER_FILTER_AAAA_QUERIES=1
+```
+
+Source: `docs/README.md:182-200`
+
+## Common Issues
+
+### systemd-resolved Conflicts
+
+**Problem**: Multiple DNS managers compete
+
+**Solution**: Ensure only one active:
+```bash
+# Check resolved status
+systemctl status systemd-resolved
+
+# Force specific method if needed
+export TALPID_DNS_MODULE=resolvconf
+```
+
+### DNS Cache Stale Entries
+
+**Problem**: Old DNS responses cached
+
+**Solution**: 
+- Windows: Automatically flushed via `DnsFlushResolverCache`
+- Linux: systemd-resolved clears cache
+- macOS: `dscacheutil -flushcache`
+
+### Private DNS Routing
+
+**Problem**: Custom private DNS unreachable
+
+**Solution**:
+- Enable "Allow LAN" setting
+- Ensures traffic to private IPs allowed
+- Routing manager adds necessary routes
+
+## Security Considerations
+
+### DNS Leak Prevention
+
+Multiple layers prevent DNS leaks:
+
+1. **DNS configuration** - Only allows approved servers
+2. **Firewall rules** - Blocks port 53 to other destinations  
+3. **Routing** - Ensures DNS traffic uses correct interface
+4. **Monitoring** - Detects and corrects external changes
+
+Source: `docs/security.md:276-291`
+
+### DNS in Split Tunneling
+
+**Desktop platforms:**
+- DNS requests from all processes use tunnel
+- Cannot be excluded per-process
+- System DNS service not excluded
+
+**Android:**
+- Excluded apps use system DNS
+- Requests bypass VPN entirely
+- Behave as if VPN disconnected
+
+Source: `docs/split-tunneling.md:16-73`

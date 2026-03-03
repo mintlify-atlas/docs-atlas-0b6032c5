@@ -1,0 +1,345 @@
+---
+title: "mullvad auto-connect"
+description: "Configure automatic VPN connection on startup"
+---
+
+## Overview
+
+The `mullvad auto-connect` command controls whether the VPN automatically connects when the Mullvad daemon starts.
+
+## Syntax
+
+```bash
+mullvad auto-connect <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display the current auto-connect setting:
+
+```bash
+mullvad auto-connect get
+```
+
+### set
+
+Change the auto-connect setting:
+
+```bash
+mullvad auto-connect set <on|off>
+```
+
+**Arguments:**
+- `on` - Enable automatic connection on startup
+- `off` - Disable automatic connection (manual connection required)
+
+## Behavior
+
+### Auto-Connect ON
+
+When auto-connect is enabled:
+
+- VPN automatically connects when the Mullvad daemon starts
+- Connection happens at system boot (if daemon starts automatically)
+- Uses current relay constraints for server selection
+- Reconnects automatically if connection drops
+- Provides "always-on" VPN functionality
+
+### Auto-Connect OFF
+
+When auto-connect is disabled:
+
+- VPN remains disconnected at startup
+- Manual connection required using `mullvad connect`
+- Gives you control over when to connect
+
+## Examples
+
+### Check Current Setting
+
+```bash
+mullvad auto-connect get
+```
+
+Output when enabled:
+```
+Autoconnect: on
+```
+
+Output when disabled:
+```
+Autoconnect: off
+```
+
+### Enable Auto-Connect
+
+```bash
+mullvad auto-connect set on
+```
+
+Output:
+```
+Changed auto-connect setting
+```
+
+### Disable Auto-Connect
+
+```bash
+mullvad auto-connect set off
+```
+
+Output:
+```
+Changed auto-connect setting
+```
+
+## Use Cases
+
+### Always-On VPN Protection
+
+Enable auto-connect for continuous protection:
+
+```bash
+mullvad auto-connect set on
+mullvad lockdown-mode set on
+```
+
+This combination:
+- Automatically connects at startup
+- Blocks traffic if VPN disconnects
+- Provides maximum privacy protection
+- Ideal for privacy-conscious users
+
+### Manual VPN Control
+
+Disable auto-connect for manual control:
+
+```bash
+mullvad auto-connect set off
+mullvad lockdown-mode set off
+```
+
+This allows:
+- Manual connection when needed
+- Normal internet access by default
+- Flexibility for different usage scenarios
+
+### Selective VPN Usage
+
+Disable auto-connect but enable lockdown mode:
+
+```bash
+mullvad auto-connect set off
+mullvad lockdown-mode set on
+```
+
+Result:
+- VPN doesn't connect automatically
+- No internet access until you manually connect
+- Prevents accidental unprotected connections
+
+## Timing and Startup Behavior
+
+### When Auto-Connect Triggers
+
+Auto-connect activates when:
+
+1. System boots (if daemon starts automatically)
+2. Mullvad daemon starts or restarts
+3. Daemon recovers from a crash
+
+Auto-connect does NOT trigger when:
+
+- You manually disconnect using `mullvad disconnect`
+- You close the Mullvad app (daemon keeps running)
+
+### Startup Sequence
+
+With auto-connect enabled:
+
+```
+1. System boots
+2. Mullvad daemon starts
+3. Auto-connect initiates connection
+4. Relay is selected based on constraints
+5. VPN connection establishes
+6. Internet access through VPN
+```
+
+## Interaction with Other Settings
+
+### Lockdown Mode
+
+Auto-connect works well with lockdown mode:
+
+```bash
+mullvad auto-connect set on
+mullvad lockdown-mode set on
+```
+
+**Behavior:**
+- At startup, lockdown mode blocks all traffic
+- Auto-connect immediately starts connecting
+- Traffic remains blocked until connected
+- No IP leaks during boot
+
+### Relay Constraints
+
+Auto-connect uses your current relay settings:
+
+```bash
+# Set preferred location
+mullvad relay set location se
+
+# Enable auto-connect
+mullvad auto-connect set on
+```
+
+Result: Automatically connects to Swedish relay at startup
+
+### Manual Disconnect
+
+Manually disconnecting doesn't disable auto-connect:
+
+```bash
+# Disconnect manually
+mullvad disconnect
+
+# Auto-connect is still enabled
+mullvad auto-connect get
+# Output: Autoconnect: on
+
+# Auto-connect triggers again on next daemon start
+```
+
+## System Integration
+
+### Linux
+
+On Linux, auto-connect works with systemd:
+
+```bash
+# Daemon starts automatically
+sudo systemctl enable mullvad-daemon
+
+# With auto-connect on, VPN connects at boot
+mullvad auto-connect set on
+```
+
+### macOS
+
+On macOS, auto-connect works with Launch Daemons:
+
+```bash
+# Daemon starts automatically
+# With auto-connect on, VPN connects at login
+mullvad auto-connect set on
+```
+
+### Windows
+
+On Windows, auto-connect works with Windows Services:
+
+```powershell
+# Service starts automatically
+# With auto-connect on, VPN connects at startup
+mullvad auto-connect set on
+```
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Manually connect to VPN
+- [disconnect](/cli/commands/disconnect) - Manually disconnect from VPN
+- [lockdown](/cli/commands/lockdown) - Configure traffic blocking when disconnected
+- [relay](/cli/commands/relay) - Set relay constraints for auto-connect
+- [status](/cli/commands/status) - Check connection status
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Setting updated successfully |
+| 1 | Failed to update setting |
+
+## Notes
+
+- Auto-connect setting is persistent across restarts
+- The setting is stored in Mullvad daemon configuration
+- Manual disconnection doesn't disable auto-connect
+- Auto-connect respects current relay constraints
+- Works on all platforms (Linux, macOS, Windows)
+
+## Recommended Configurations
+
+### Maximum Privacy
+
+```bash
+mullvad auto-connect set on
+mullvad lockdown-mode set on
+mullvad lan set block
+```
+
+Result: Always protected, no leaks, maximum privacy
+
+### Balanced Privacy
+
+```bash
+mullvad auto-connect set on
+mullvad lockdown-mode set on
+mullvad lan set allow
+```
+
+Result: Always protected, local network accessible
+
+### Manual Control
+
+```bash
+mullvad auto-connect set off
+mullvad lockdown-mode set off
+```
+
+Result: Full control, connect when needed
+
+## Troubleshooting
+
+### Auto-Connect Not Working
+
+If VPN doesn't connect at startup:
+
+1. Check auto-connect setting:
+   ```bash
+   mullvad auto-connect get
+   ```
+
+2. Verify daemon is running:
+   ```bash
+   # Linux
+   systemctl status mullvad-daemon
+   
+   # macOS
+   launchctl list | grep mullvad
+   
+   # Windows
+   sc query mullvad-daemon
+   ```
+
+3. Check daemon logs for connection errors
+
+4. Verify you're logged in:
+   ```bash
+   mullvad account get
+   ```
+
+### Unwanted Auto-Connection
+
+If VPN connects when you don't want it to:
+
+```bash
+mullvad auto-connect set off
+```
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/auto_connect.rs`

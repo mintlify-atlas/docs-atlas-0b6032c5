@@ -1,0 +1,486 @@
+---
+title: Tunnel State Machine
+description: Detailed explanation of tunnel states and their security guarantees
+---
+
+At the core of Mullvad VPN is a **tunnel state machine** that coordinates VPN connections and enforces security policies. Each state has specific security properties that determine what traffic is allowed or blocked.
+
+## State Machine Overview
+
+The tunnel state machine manages the lifecycle of VPN connections:
+
+```
+┌─────────────┐   Connect    ┌────────────┐
+│ Disconnected│─────────────>│ Connecting │
+└──────┬──────┘              └─────┬──┬───┘
+       ↑                       ↑   │  │
+       │                       │   │  │ Tunnel verified
+       │     Reconnect         │   │  │
+       │    ┌──────────────────┘   │  │
+       │    │                      │  │
+       │    │     Unrecoverable    │  │
+       │    │         error        │  │
+       │    │          ↓           │  │
+       │    │      ┌───────┐      │  │
+       │    │      │ Error │<─────┘  │
+       │    │      └───┬───┘         │
+       │    │          │             ↓
+       │    │          │      ┌──────────┐
+       │    └──────────┼─────>│ Connected│
+       │               │      └─────┬────┘
+       │               │            │
+       │         Disconnect         │
+       │               │            │
+       │               ↓            │
+       │        ┌───────────────┐   │
+       └────────┤ Disconnecting │<──┘
+                └───────────────┘
+```
+
+<Note>
+Except for explicitly allowed traffic, **all network packets are blocked** in every state. The sections below describe what is allowed; everything else is blocked.
+</Note>
+
+## Always-Allowed Traffic
+
+The following traffic is allowed or blocked **independent of state**:
+
+### 1. Loopback Traffic
+
+All traffic on loopback adapters is always allowed:
+- `127.0.0.0/8` (IPv4)
+- `::1` (IPv6)
+
+### 2. DHCP Traffic
+
+DHCPv4 and DHCPv6 are always allowed for network configuration:
+
+**DHCPv4:**
+- Outgoing UDP: `*:68` → `255.255.255.255:67` (client to server)
+- Incoming UDP: `*:67` → `*:68` (server to client)
+
+**DHCPv6:**
+- Outgoing UDP: `[fe80::]/10:546` → `[ff02::1:2]:547` and `[ff05::1:3]:547`
+- Incoming UDP: `[fe80::]/10:547` → `[fe80::]/10:546`
+
+### 3. Neighbor Discovery Protocol (NDP)
+
+A subset of NDP is allowed for IPv6 operation:
+
+- **Router Solicitation** (ICMPv6 type 133, code 0):
+  - Outgoing to `ff02::2`
+- **Router Advertisement** (ICMPv6 type 134, code 0):
+  - Incoming from `fe80::/10`
+- **Redirect** (ICMPv6 type 137, code 0):
+  - Incoming from `fe80::/10`  
+- **Neighbor Solicitation** (ICMPv6 type 135, code 0):
+  - Outgoing to `ff02::1:ff00:0/104` and `fe80::/10`
+  - Incoming from `fe80::/10`
+- **Neighbor Advertisement** (ICMPv6 type 136, code 0):
+  - Outgoing to `fe80::/10`
+  - Incoming from any source
+
+### 4. Allow LAN Setting
+
+If the "Allow LAN" setting is enabled, additional traffic is allowed:
+
+**Private Networks (Bidirectional):**
+- `10.0.0.0/8`
+- `172.16.0.0/12`
+- `192.168.0.0/16`
+- `169.254.0.0/16` (Link-local IPv4)
+- `fe80::/10` (Link-local IPv6)
+- `fc00::/7` (Unique local address)
+
+**Multicast (Outgoing Only):**
+- `224.0.0.0/24` (Local subnet IPv4)
+- `239.0.0.0/8` (Administratively scoped IPv4 - SSDP, mDNS)
+- `255.255.255.255/32` (Local broadcast)
+- `ff01::/16` through `ff05::/16` (Various IPv6 multicast scopes)
+
+**DHCPv4 Server (Incoming Requests, Outgoing Responses):**
+- Incoming UDP: `*:68` → `255.255.255.255:67`
+- Outgoing UDP: `*:67` → `*:68`
+
+### 5. Mullvad API Access
+
+The firewall allows traffic to the Mullvad API in all states:
+
+- **Connected state**: API traffic only allowed inside the tunnel
+- **Other states**: API traffic bypasses the firewall
+- **Windows**: Only Mullvad service and problem report tool can reach API in blocking states
+- **macOS/Linux**: All processes running as root can reach API in blocking states
+
+API connections use TLS 1.3 with certificate pinning to the bundled Let's Encrypt root certificate.
+
+### 6. Packet Forwarding (Linux Only)
+
+On Linux, situations that permit incoming or outgoing traffic also allow that traffic to be forwarded. All other forward traffic is rejected.
+
+## State: Disconnected
+
+The Disconnected state is the initial state when the daemon starts.
+
+### When Active
+
+- System boot (unless auto-connect is enabled)
+- After user explicitly clicks disconnect/cancel
+- **NOT** active during server changes or unexpected tunnel failures
+
+### Security Behavior
+
+Disconnected state behaves differently based on the "Lockdown mode" setting:
+
+**Without Lockdown Mode (Default):**
+- No firewall rules enforced
+- Traffic flows freely as if daemon wasn't running
+- Normal internet access without VPN
+
+**With Lockdown Mode Enabled:**  
+- Behaves like [Error state](#state-error)
+- Blocks all traffic except always-allowed exceptions
+- No internet access without VPN connection
+
+<Note>
+The Disconnected state is the **only** state where the app doesn't enforce firewall rules by default. This is intentional—when you explicitly disconnect, you regain normal internet access.
+</Note>
+
+### Allowed Traffic
+
+Without lockdown mode:
+- **Everything** - No firewall restrictions
+
+With lockdown mode:
+- Only the [always-allowed traffic](#always-allowed-traffic)
+
+### Typical Duration
+
+- Initial state at daemon start
+- Remains until user requests connection
+- Returns only when user explicitly disconnects
+
+## State: Connecting
+
+The Connecting state is active while establishing a VPN tunnel.
+
+### When Active
+
+- User requests connection
+- Automatic reconnection after tunnel loss
+- Server change initiated by user
+- Setting change requires tunnel restart
+
+### Security Behavior
+
+Strict firewall rules allow only tunnel establishment traffic:
+
+<Warning>
+All regular traffic is blocked in the Connecting state. Only the VPN tunnel establishment is allowed. This prevents leaks during connection setup.
+</Warning>
+
+### Allowed Traffic
+
+1. **Always-allowed traffic** (loopback, DHCP, NDP, etc.)
+2. **VPN server connection**:
+   - Traffic to VPN server IP + port + protocol
+   - Outgoing tunnel establishment packets
+   - Incoming responses to tunnel traffic
+   - **Process restrictions apply** (see below)
+3. **Mullvad API access** (bypasses firewall)
+
+### Process/User Restrictions
+
+To prevent fingerprinting, only privileged processes can reach the VPN server:
+
+**Windows:**
+- Only processes from specific paths (e.g., `mullvad-daemon.exe`)
+- Prevents unprivileged apps from leaking to VPN server IP
+
+**macOS:**
+- Only processes running as `root`
+
+**Linux:**  
+- Only packets with firewall mark `0x6d6f6c65` set, OR
+- Only processes running as `root` (fallback if marks not supported)
+
+These restrictions prevent unprivileged programs from sending packets to the VPN server IP, which could be used for fingerprinting by an attacker.
+
+### DNS Behavior
+
+DNS requests are **blocked** in the Connecting state.
+
+### Example Scenarios
+
+**Single-hop WireGuard:**
+- Allow: UDP to `198.51.100.10:51820` from privileged processes
+- Block: Everything else
+
+**Multi-hop WireGuard:**  
+- Entry server: `203.0.113.50:51820`
+- Exit server: `198.51.100.10:51820`
+- Allow: UDP to entry server `203.0.113.50:51820` only
+- Block: Direct communication with exit server
+- Block: Everything else
+
+### Transition to Connected
+
+When using WireGuard, traffic inside the tunnel is permitted immediately after the tunnel device is created. The state transitions to Connected once the tunnel is verified working.
+
+### Typical Duration
+
+Few seconds to establish tunnel (varies by network conditions).
+
+## State: Connected
+
+The Connected state is active when a VPN tunnel is fully established and verified working.
+
+### When Active
+
+- After Connecting state successfully establishes tunnel
+- Remains active until:
+  - User requests disconnect/quit
+  - User requests server change  
+  - Setting change requires tunnel restart
+  - Tunnel goes down unexpectedly
+
+### Security Behavior
+
+All traffic must flow through the encrypted tunnel:
+
+<Note>
+In the Connected state, traffic is only allowed through the tunnel interface. Traffic not using the tunnel is blocked, ensuring no leaks.
+</Note>
+
+### Allowed Traffic
+
+1. **Always-allowed traffic** (loopback, DHCP, NDP, etc.)
+2. **Tunnel traffic**:
+   - All traffic in both directions over the tunnel interface
+   - **Except**: DNS to non-approved servers (see below)
+3. **VPN server connection**:
+   - Traffic to/from VPN server IP + port + protocol
+   - Required to maintain the tunnel
+   - Same process restrictions as Connecting state
+4. **Mullvad API access** (inside tunnel only in this state)
+
+### DNS Behavior
+
+DNS is strictly controlled in the Connected state:
+
+**Allowed:**
+- DNS to the gateway IP on the tunnel interface (default)
+- DNS to custom DNS servers (if configured)
+
+**Blocked:**  
+- DNS to any other address
+- Both TCP and UDP port 53 blocked for non-approved destinations
+
+<Warning>
+DNS requests to addresses other than the tunnel gateway or configured custom DNS servers are blocked, preventing DNS leaks.
+</Warning>
+
+**Custom DNS Servers:**
+
+If custom DNS servers are configured:
+- Public custom DNS: Queries go through tunnel
+- Private IP custom DNS (`192.168.0.0/16`, etc.): Bypass tunnel
+- Loopback custom DNS (`127.0.0.1`, `::1`): Bypass tunnel
+
+### Example: Connected State Traffic
+
+**Allowed:**
+- HTTPS to any server (through tunnel interface `wg-mullvad`)
+- DNS to `10.66.0.1` (tunnel gateway)
+- UDP to `198.51.100.10:51820` (maintain tunnel)
+
+**Blocked:**
+- DNS to `8.8.8.8` (would leak DNS)
+- Direct traffic not using tunnel interface
+- Any traffic trying to bypass the tunnel
+
+### Typical Duration
+
+Remains active as long as VPN is connected and working (hours, days, or until user disconnects).
+
+## State: Disconnecting
+
+The Disconnecting state is active while closing a VPN tunnel.
+
+### When Active
+
+- User requests disconnect
+- User requests quit
+- User requests server change (closing old tunnel before opening new)
+- Setting change requires closing tunnel
+
+### Security Behavior
+
+The Disconnecting state **does not apply its own security policy**.
+
+<Note>
+The Disconnecting state maintains the firewall rules from the previous state. It's a short transition while waiting for the tunnel to close cleanly.
+</Note>
+
+All states that transition into Disconnecting have their own security policies, which remain active during the disconnection process.
+
+### Allowed Traffic
+
+Same as the previous state (typically Connected or Connecting).
+
+### Typical Duration
+
+Very brief (milliseconds to a few seconds) while tunnel closes and cleans up.
+
+### Transitions From Disconnecting
+
+The Disconnecting state can transition to:
+
+1. **Disconnected**: User requested disconnect/quit
+2. **Connecting**: User requested server change or reconnect
+3. **Error**: Problem occurred during disconnection
+
+## State: Error
+
+The Error state is active when a problem prevents establishing a tunnel.
+
+### When Active
+
+- Account runs out of time
+- Computer is offline
+- Internal error parsing system config (routing, DNS, etc.)
+- Tunnel fails and cannot reconnect
+- Any unrecoverable error in Connecting or Connected states
+
+### Security Behavior
+
+Strict blocking to prevent leaks when tunnel cannot be established:
+
+<Warning>
+The Error state blocks all traffic except always-allowed exceptions. The app will NOT unlock the firewall when errors occur. User must explicitly disconnect to regain internet access.
+</Warning>
+
+### Allowed Traffic
+
+Only the [always-allowed traffic](#always-allowed-traffic):
+
+- Loopback traffic
+- DHCP (IPv4 and IPv6)
+- NDP subset
+- Allow LAN traffic (if enabled)
+- Mullvad API access
+
+**Blocked:**
+- All regular application traffic
+- DNS requests
+- Everything not explicitly allowed above
+
+### Rationale
+
+When the app can't establish a tunnel but the user has requested VPN protection, it's better to have no internet access than to leak unencrypted traffic. This is the "fail closed" principle.
+
+### User Action Required  
+
+To regain internet access from Error state:
+
+1. Fix the underlying issue (add time, restore connectivity, etc.), OR
+2. Explicitly click disconnect in the app
+
+The app will display the error reason to help users diagnose the issue.
+
+### Firewall Integration Failure
+
+<Warning>
+If firewall integration fails and the Error state cannot block traffic, the app informs the user of the serious security situation. Without functioning firewall rules, the app cannot prevent leaks.
+</Warning>
+
+### Typical Duration
+
+- Remains active until user fixes the issue or explicitly disconnects
+- Can last indefinitely if user doesn't take action
+
+## State Machine Inputs
+
+The tunnel state machine reacts to two types of inputs:
+
+### Commands
+
+Commands sent to the state machine:
+
+- **Connect**: Establish a secure VPN connection
+- **Disconnect**: Tear down VPN and return to Disconnected state
+- **Allow LAN**: Enable/disable local network sharing
+- **Block when disconnected**: Enable/disable lockdown mode
+
+### External Events  
+
+Events the state machine listens for:
+
+- **Tunnel is Up**: Tunnel monitor reports tunnel is working
+- **Tunnel is Down**: Tunnel monitor reports tunnel disconnected  
+- **Tunnel Monitor Stopped**: Communication to tunnel monitor lost
+- **Is Offline**: OS is not connected to any network
+
+## State Machine Outputs
+
+Every state change produces a `TunnelStateTransition` output:
+
+- **Disconnected**: No metadata
+- **Connecting**: Includes endpoint being connected to  
+- **Connected**: Includes endpoint connected to
+- **Disconnecting**: Includes action after disconnected:
+  - *Nothing*: Proceed to Disconnected
+  - *Block*: Proceed to Error
+  - *Reconnect*: Proceed to Connecting
+- **Error**: Includes error cause and whether blocking succeeded
+
+Frontends (GUI, CLI) subscribe to these transitions to update the UI.
+
+## Security Guarantees Summary
+
+| State | Regular Traffic | DNS | VPN Server | API |
+|-------|----------------|-----|------------|-----|
+| **Disconnected** | ✅ Allowed (default)<br/>❌ Blocked (lockdown) | ✅ Allowed (default)<br/>❌ Blocked (lockdown) | ❌ Blocked | ✅ Bypass |
+| **Connecting** | ❌ Blocked | ❌ Blocked | ✅ Privileged only | ✅ Bypass |
+| **Connected** | ✅ Tunnel only | ✅ Tunnel only | ✅ Privileged only | ✅ Tunnel only |
+| **Disconnecting** | *(Previous state)* | *(Previous state)* | *(Previous state)* | *(Previous state)* |
+| **Error** | ❌ Blocked | ❌ Blocked | ❌ Blocked | ✅ Bypass |
+
+<Note>
+Always-allowed traffic (loopback, DHCP, NDP, Allow LAN) is permitted in all states.
+</Note>
+
+## Testing State Transitions
+
+You can observe state transitions:
+
+**CLI:**
+```bash
+mullvad status
+mullvad status listen  # Watch state changes
+```
+
+**GUI:**
+- Current state displayed in the app header
+- Color coding indicates state (green = connected, yellow = connecting, red = error)
+
+**Logs:**
+```bash
+# Linux/macOS
+journalctl -u mullvad-daemon -f
+
+# Windows  
+Get-Content "C:\ProgramData\Mullvad VPN\daemon.log" -Wait
+```
+
+## Related Documentation
+
+- [Leak Protection](/security/leak-protection) - Detailed leak prevention in each state
+- [Kill Switch](/security/kill-switch) - Always-on protection mechanism  
+- [Firewall Integration](/security/firewall) - How states apply firewall rules
+- [Architecture](/architecture/overview) - Tunnel state machine implementation
+
+## Source Code References
+
+- Tunnel state machine: `talpid-core/src/tunnel_state_machine/`
+- State definitions: `mullvad-types/src/states.rs`
+- Architecture documentation: `docs/architecture.md` (source:72-188)

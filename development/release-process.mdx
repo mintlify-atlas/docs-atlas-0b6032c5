@@ -1,0 +1,324 @@
+---
+title: Release Process
+description: Complete guide to building and releasing Mullvad VPN
+icon: rocket
+---
+
+This guide walks through the complete process of creating a new release of Mullvad VPN desktop apps.
+
+## Prerequisites
+
+Before starting the release process, ensure you have completed all the steps in [Build Instructions](/development/build-instructions).
+
+## Release Workflow
+
+### 1. Update CHANGELOG
+
+Ensure `CHANGELOG.md` is up to date with all changes for this release:
+
+1. Review all changes since the last release
+2. Change the `[Unreleased]` header to `[<VERSION>] - <DATE>` format
+3. Add a new `[Unreleased]` header at the top
+4. Push changes, get them reviewed, and merge
+
+**CHANGELOG Format**
+
+```markdown
+## [Unreleased]
+### Added
+- New features
+
+### Changed  
+- Changes to existing functionality
+
+### Fixed
+- Bug fixes
+
+### Security
+- Security-related changes
+```
+
+<Info>
+The CHANGELOG follows [Keep a Changelog](http://keepachangelog.com/en/1.0.0/) format. Use imperative form for entries (e.g., "add", "fix", "increase").
+</Info>
+
+### 2. Prepare Release
+
+Run the `prepare-release.sh` script to prepare the release:
+
+```bash
+./prepare-release.sh [--desktop] [--android] <VERSION>
+```
+
+**What it does:**
+
+- Checks repository state and version format
+- Updates `package.json` with the new version
+- Creates a signed git tag with the release version
+- Commits the version changes
+
+**Example:**
+
+```bash
+./prepare-release.sh --desktop 2026.2-beta1
+```
+
+<Warning>
+Verify the script did the right thing before pushing the commit and tag!
+</Warning>
+
+### 3. Configure Code Signing
+
+Code signing is required for production releases.
+
+#### Windows and macOS
+
+Set these environment variables:
+
+**`CSC_LINK`** - Path to the signing certificate:
+- **Windows**: `.pfx` certificate file
+- **macOS**: `.p12` certificate file containing both:
+  - Developer ID Application certificate
+  - Developer ID Installer certificate
+
+**`CSC_KEY_PASSWORD`** - Certificate password
+
+<Tip>
+To avoid storing the password in bash history:
+
+```bash
+export HISTCONTROL=ignorespace
+ export CSC_KEY_PASSWORD='my secret'
+```
+</Tip>
+
+#### macOS Only: Notarization
+
+For macOS releases, configure notarization:
+
+**`NOTARIZE_KEYCHAIN`** - Keychain where the notarytool profile is stored
+
+**`NOTARIZE_KEYCHAIN_PROFILE`** - Name of the notarytool profile
+
+**Setup notarytool profile:**
+
+1. Generate an app-specific password on Apple's AppleID management portal
+2. Run:
+   ```bash
+   xcrun notarytool store-credentials <profile name> --keychain <keychain path>
+   ```
+3. Leave the first prompt empty, then fill in:
+   - Apple ID
+   - App-specific password (not your real Apple ID password)
+   - Team ID
+4. Set the environment variables to match step 2
+
+### 4. Build Release
+
+Run `build.sh` on each platform where you want to create a release artifact:
+
+```bash
+./build.sh
+```
+
+**What it does:**
+
+1. Updates `relays.json` with the latest relay list
+2. Compiles and packages the app into a distributable artifact
+3. Signs the binaries (if configured)
+
+**Build artifacts are created in the `dist/` directory.**
+
+<Note>
+Pay attention to the output at the end of the script and verify the version matches what you want to release.
+</Note>
+
+### 5. Verify Build
+
+Before distribution:
+
+1. **Check the version number** in the built artifact
+2. **Test the installer** on a clean system
+3. **Verify signatures** on signed builds
+4. **Test core functionality** after installation
+
+## Release Types
+
+### Production Release
+
+A production release meets these criteria:
+- Built with `--sign` flag (signatures enabled)
+- Built with `--optimize` flag (optimizations enabled)
+- Built on a release git tag (no `-dev-` suffix in version)
+
+Example:
+```bash
+./build.sh --optimize --sign
+```
+
+### Development Build
+
+Any build that doesn't meet all production release criteria is a development build:
+- Has `-dev-{commit hash}` appended to version
+- Not for general distribution
+- Allows runtime API server override
+
+Example:
+```bash
+./build.sh
+```
+
+<Warning>
+Never distribute unsigned builds or dev builds to end users!
+</Warning>
+
+## Build Options
+
+### Optimization
+
+Enable compiler optimizations (slower build, smaller binaries):
+
+```bash
+./build.sh --optimize
+```
+
+### Signing
+
+Sign the build artifacts (requires certificates):
+
+```bash
+./build.sh --sign
+```
+
+### Notarization (macOS)
+
+Notarize the macOS build with Apple:
+
+```bash
+./build.sh --notarize
+```
+
+### Universal Builds
+
+Create installers supporting both x86_64 and ARM64:
+
+```bash
+# macOS or Windows only
+./build.sh --universal
+```
+
+### Combined Example
+
+```bash
+./build.sh --optimize --sign --universal --notarize
+```
+
+## Platform-Specific Notes
+
+### Windows
+
+**Requirements:**
+- Visual Studio 2022 Build Tools or Community Edition
+- Windows 10/11 SDK
+- `msbuild.exe` in PATH
+- `zig` 0.14+ in PATH
+
+**Signing:**
+Requires `CERT_HASH` environment variable with certificate thumbprint.
+
+### macOS
+
+**Requirements:**
+- Recent bash version (not the default 3.2.57)
+- Xcode command line tools
+- `clang` for CGo
+
+**Universal Builds:**
+By default, builds for current architecture only. Use `--universal` for both Intel and Apple Silicon.
+
+### Linux
+
+**Cross-compilation for ARM64:**
+
+```bash
+TARGETS="aarch64-unknown-linux-gnu" ./build.sh
+```
+
+## Clean Working Directory
+
+<Warning>
+Release builds MUST be done on a clean working directory. The build script will refuse to sign if there are uncommitted changes.
+</Warning>
+
+The script enforces this to prevent:
+- Release builds from potentially modified code
+- Accidentally distributing untested changes
+- Supply chain security issues
+
+## Version Numbering
+
+Mullvad VPN uses this versioning scheme:
+
+- **Stable releases**: `YYYY.N` (e.g., `2026.1`)
+- **Beta releases**: `YYYY.N-betaN` (e.g., `2026.1-beta1`)
+- **Dev builds**: `YYYY.N-dev-HASH` (e.g., `2026.1-dev-abc123`)
+
+Where:
+- `YYYY` is the year
+- `N` is the release number for that year
+- `HASH` is the git commit hash
+
+## Post-Release
+
+After building:
+
+1. **Upload artifacts** to distribution channels
+2. **Create GitHub release** with changelog
+3. **Update download pages** on mullvad.net
+4. **Announce the release** via blog and social media
+5. **Monitor for issues** in the first 24-48 hours
+
+## Troubleshooting
+
+### "Dirty working directory" Error
+
+The build script refuses to sign on dirty working directories.
+
+**Solution:**
+- Commit all changes before building with `--sign`
+- Or remove `--sign` for development builds
+
+### Certificate/Signing Errors
+
+**Windows:**
+- Verify `CERT_HASH` matches the certificate thumbprint
+- Check certificate is installed in the certificate store
+
+**macOS:**
+- Verify `CSC_LINK` points to valid `.p12` file
+- Check `CSC_KEY_PASSWORD` is correct
+- Ensure certificate includes both Application and Installer certs
+
+### Notarization Fails
+
+- Verify notarytool profile is configured correctly
+- Check Apple ID credentials are valid
+- Ensure app-specific password is used (not regular password)
+- Verify Team ID is correct
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build Instructions" icon="hammer" href="/development/build-instructions">
+    Set up your development environment
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/development/troubleshooting">
+    Fix common development issues
+  </Card>
+  <Card title="Known Issues" icon="triangle-exclamation" href="/development/known-issues">
+    Platform-specific limitations
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/development/contributing">
+    How to contribute to the project
+  </Card>
+</CardGroup>

@@ -1,0 +1,496 @@
+---
+title: WireGuard Implementation
+description: Technical deep-dive into Mullvad's WireGuard tunnel implementation across platforms
+---
+
+Mullvad VPN uses WireGuard as its primary VPN protocol, with support for both kernel and userspace implementations across multiple platforms. This document provides a technical overview of the WireGuard configuration, tunnel management, and platform-specific implementations.
+
+## Architecture Overview
+
+The WireGuard implementation is centered around the `talpid-wireguard` crate, which provides:
+
+- **Tunnel Management**: The `WireguardMonitor` orchestrates tunnel lifecycle, connectivity monitoring, and configuration
+- **Multiple Implementations**: Support for kernel-space (Linux), WireGuard-NT (Windows), and userspace implementations (wireguard-go, gotatun)
+- **Platform Abstraction**: Unified interface through the `Tunnel` trait for different implementations
+- **Automatic Fallback**: Graceful degradation from kernel to userspace when necessary
+
+### Code References
+
+- Main implementation: `talpid-wireguard/src/lib.rs`
+- Configuration: `talpid-wireguard/src/config.rs`
+- Kernel implementation (Linux): `talpid-wireguard/src/wireguard_kernel/`
+- Windows implementation: `talpid-wireguard/src/wireguard_nt/mod.rs`
+- Userspace implementations: `talpid-wireguard/src/wireguard_go/mod.rs`, `talpid-wireguard/src/gotatun/mod.rs`
+
+## WireGuard Configuration
+
+### Config Structure
+
+The `Config` struct in `talpid-wireguard/src/config.rs` encapsulates all tunnel configuration:
+
+```rust
+pub struct Config {
+    pub tunnel: wireguard::TunnelConfig,
+    pub entry_peer: wireguard::PeerConfig,
+    pub exit_peer: Option<wireguard::PeerConfig>,  // For multihop
+    pub ipv4_gateway: Ipv4Addr,
+    pub ipv6_gateway: Option<Ipv6Addr>,
+    pub mtu: u16,
+    #[cfg(target_os = "linux")]
+    pub fwmark: Option<u32>,
+    #[cfg(target_os = "linux")]
+    pub enable_ipv6: bool,
+    pub obfuscator_config: Option<Obfuscators>,
+    pub quantum_resistant: bool,
+    pub daita: bool,
+}
+```
+
+**Key Configuration Points:**
+
+- **Multihop Support**: Optional `exit_peer` enables multi-hop connections through two relay servers
+- **Obfuscation**: `obfuscator_config` can specify UDP2TCP, Shadowsocks, QUIC, or LWO obfuscation
+- **Quantum Resistance**: When `quantum_resistant` is true, ephemeral peers are negotiated with post-quantum KEMs
+- **DAITA**: Defense Against AI-guided Traffic Analysis adds traffic padding
+
+### Peer Configuration
+
+```rust
+pub struct PeerConfig {
+    pub public_key: PublicKey,
+    pub endpoint: SocketAddr,
+    pub allowed_ips: Vec<IpNetwork>,
+    pub psk: Option<PresharedKey>,  // Set via quantum-resistant handshake
+    pub constant_packet_size: bool, // For DAITA
+}
+```
+
+### Userspace Format
+
+The configuration can be converted to WireGuard-go's format via `to_userspace_format()` (`config.rs:122`):
+
+```
+private_key=<hex>
+listen_port=0
+fwmark=<value>
+replace_peers=true
+public_key=<hex>
+endpoint=<ip:port>
+replace_allowed_ips=true
+preshared_key=<hex>
+allowed_ip=<cidr>
+...
+```
+
+## Platform Implementations
+
+### Linux
+
+Linux supports both kernel and userspace implementations:
+
+**Kernel Implementation** (`wireguard_kernel/mod.rs`):
+- Uses netlink for configuration via `NetlinkTunnel`
+- NetworkManager integration via `NetworkManagerTunnel` when systemd-resolved is unavailable
+- Automatic fallback to userspace on failure
+
+```rust
+if will_nm_manage_dns() {
+    NetworkManagerTunnel::new(runtime, config)
+} else {
+    NetlinkTunnel::new(runtime, config)
+}
+```
+
+**Userspace Implementation**:
+- wireguard-go (via `TALPID_FORCE_USERSPACE_WIREGUARD` env var)
+- gotatun (without `wireguard-go` feature)
+- Required for DAITA support
+
+**Force Userspace** (`lib.rs:145-151`):
+```rust
+static FORCE_USERSPACE_WIREGUARD: LazyLock<bool> = LazyLock::new(|| {
+    env::var("TALPID_FORCE_USERSPACE_WIREGUARD")
+        .map(|v| v != "0")
+        .unwrap_or(false)
+});
+```
+
+### Windows
+
+Windows uses WireGuard-NT (kernel driver) or wireguard-go:
+
+**WireGuard-NT** (`wireguard_nt/mod.rs`):
+- Native kernel driver for best performance
+- Requires driver installation and elevated privileges
+- Manages tunnel adapter via Windows APIs
+
+**IP Address Configuration** (`lib.rs:659-691`):
+- WireGuard-NT requires explicit IP address assignment
+- Waits for adapter to be ready before assigning addresses
+- Uses `talpid_windows::net::add_ip_address_for_interface()`
+
+### macOS
+
+Always uses userspace implementation (`lib.rs:736-762`):
+- wireguard-go (with feature flag)
+- gotatun (without feature flag)
+- No kernel module available
+
+### Android
+
+**Special Considerations** (`lib.rs:405-601`):
+
+1. **No Route Configuration**: Routes are managed by Android VpnService
+2. **Connectivity Check Before Ephemeral Peer**: Required for gotatun implementation
+3. **Socket Bypass**: VPN sockets must be protected from routing through the tunnel
+4. **Multihop Support**: Special handling via `wgTurnOnMultihop()` FFI call
+
+```rust
+#[cfg(target_os = "android")]
+pub fn turn_on_multihop(
+    exit_settings: &CStr,
+    entry_settings: &CStr,
+    private_ip: &CStr,
+    device: OwnedFd,
+    ...
+) -> Result<Self, Error>
+```
+
+## Tunnel Lifecycle
+
+### Startup Sequence
+
+1. **MTU Calculation** (`lib.rs:165-167`):
+   ```rust
+   let route_mtu = get_route_mtu(params, &route_manager).await;
+   let tunnel_mtu = calculate_tunnel_mtu(route_mtu, params, userspace_multihop);
+   ```
+
+2. **Configuration Creation** (`lib.rs:169-170`):
+   ```rust
+   let mut config = Config::from_parameters(params, tunnel_mtu)?;
+   ```
+
+3. **Obfuscation Setup** (`lib.rs:180-187`):
+   ```rust
+   let obfuscator = obfuscation::apply_obfuscation_config(
+       &mut config,
+       obfuscation_mtu,
+       close_obfs_sender.clone(),
+   ).await?;
+   ```
+
+4. **Tunnel Creation** (`lib.rs:200-213`):
+   - Platform-specific tunnel implementation instantiated
+   - Returns interface name for routing configuration
+
+5. **Interface Configuration** (`lib.rs:258-262`):
+   - IP addresses assigned
+   - Emits `TunnelEvent::InterfaceUp` with restricted traffic
+
+6. **Routing Setup** (`lib.rs:265-280`):
+   - Policy routing rules (Linux)
+   - Routes to gateway and allowed IPs
+   - Endpoint protection routes
+
+7. **Ephemeral Peer Negotiation** (`lib.rs:283-301`):
+   - If quantum-resistant or DAITA enabled
+   - Establishes PSK via post-quantum KEMs
+   - Updates configuration with ephemeral keys
+
+8. **Connectivity Check** (`lib.rs:343-359`):
+   - ICMP ping to gateway
+   - Timeout on failure
+
+9. **Default Route Installation** (`lib.rs:363-370`):
+   - 0.0.0.0/0 and ::/0 routes added last
+   - Emits `TunnelEvent::Up`
+
+10. **Monitoring** (`lib.rs:375-383`):
+    - Continuous connectivity monitoring
+    - Automatic MTU detection (optional)
+
+## MTU Handling
+
+### MTU Calculation
+
+The tunnel MTU accounts for encapsulation overhead (`lib.rs:1229-1249`):
+
+```rust
+fn calculate_tunnel_mtu(
+    link_mtu_for_peer: u16,
+    params: &TunnelParameters,
+    userspace_multihop: bool,
+) -> u16 {
+    if let Some(mtu) = params.options.mtu {
+        return mtu;  // User override
+    }
+
+    let mut overhead = wireguard_overhead(params.connection.peer.endpoint.ip());
+    
+    // Userspace multihop needs additional overhead
+    if userspace_multihop && let Some(exit_peer) = &params.connection.exit_peer {
+        overhead += wireguard_overhead(exit_peer.endpoint.ip());
+    }
+    
+    clamp_tunnel_mtu(params, link_mtu_for_peer.saturating_sub(overhead))
+}
+```
+
+**WireGuard Overhead** (`lib.rs:1276-1281`):
+- IPv4: 20 (IP header) + 32 (WireGuard header) = 52 bytes
+- IPv6: 40 (IP header) + 32 (WireGuard header) = 72 bytes
+
+### MTU Clamping
+
+```rust
+fn clamp_tunnel_mtu(params: &TunnelParameters, mtu: u16) -> u16 {
+    let min_mtu = match params.generic_options.enable_ipv6 {
+        false => MIN_IPV4_MTU,  // 1280
+        true => MIN_IPV6_MTU,   // 1280
+    };
+    
+    const MTU_SAFETY_MARGIN: u16 = 60;
+    let max_peer_mtu = 1500 - MTU_SAFETY_MARGIN - wireguard_overhead(...);
+    
+    mtu.clamp(min_mtu, max_peer_mtu)
+}
+```
+
+### Automatic MTU Detection
+
+When MTU is not explicitly set, the system monitors for dropped packets and adjusts MTU (`mtu_detection.rs`):
+
+```rust
+if detect_mtu {
+    tokio::task::spawn(async move {
+        if config.daita {
+            log::warn!("MTU detection is not supported with DAITA");
+            return;
+        }
+        mtu_detection::automatic_mtu_correction(
+            gateway,
+            iface_name,
+            config.mtu,
+        ).await
+    });
+}
+```
+
+## Multihop Configuration
+
+### Single-Hop vs Multihop
+
+**Single-Hop**:
+```
+Client <--WG--> Entry Relay <--Internet--> Destination
+```
+
+**Multihop**:
+```
+Client <--WG--> Entry Relay <--WG--> Exit Relay <--Internet--> Destination
+```
+
+### Peer Structure
+
+In multihop mode (`config.rs:134-146`):
+
+```rust
+impl Config {
+    pub fn is_multihop(&self) -> bool {
+        self.exit_peer.is_some()
+    }
+    
+    pub fn exit_peer(&self) -> &PeerConfig {
+        self.exit_peer.as_ref().unwrap_or(&self.entry_peer)
+    }
+    
+    pub fn peers(&self) -> impl Iterator<Item = &PeerConfig> {
+        self.exit_peer.as_ref().into_iter()
+            .chain(std::iter::once(&self.entry_peer))
+    }
+}
+```
+
+### Routing Configuration
+
+Multihop requires special route MTU considerations (`lib.rs:989-1013`):
+
+```rust
+fn apply_route_mtu_for_multihop(
+    route: RequiredRoute,
+    config: &Config,
+    userspace_wireguard: bool,
+) -> RequiredRoute {
+    // Userspace multihop doesn't need route MTU adjustment
+    let using_gotatun = userspace_wireguard && cfg!(not(feature = "wireguard-go"));
+    
+    if !config.is_multihop() || using_gotatun {
+        route
+    } else {
+        // Subtract WireGuard overhead + padding margin
+        const PADDING_BYTES_MARGIN: u16 = 15;
+        let mtu = config.mtu - wireguard_overhead(route.prefix.ip()) - PADDING_BYTES_MARGIN;
+        route.with_mtu(mtu)
+    }
+}
+```
+
+## Connectivity Monitoring
+
+### Pinger Implementation
+
+The connectivity module (`connectivity/mod.rs`) implements ICMP/ICMPv6 pings to verify tunnel connectivity:
+
+```rust
+pub struct Check {
+    gateway: Ipv4Addr,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    iface_name: String,
+    retry_attempt: u32,
+    cancel_receiver: CancelToken,
+}
+```
+
+**Establishment Check** (`lib.rs:343-359`):
+```rust
+match connectivity_monitor.establish_connectivity(tunnel).await {
+    Ok(true) => Ok(()),
+    Ok(false) => {
+        log::warn!("Timeout while checking tunnel connection");
+        Err(CloseMsg::PingErr)
+    }
+    Err(error) => {
+        log::error!("Failed to check tunnel connection: {}", error);
+        Err(CloseMsg::PingErr)
+    }
+}
+```
+
+### Continuous Monitoring
+
+After tunnel is up, monitoring continues (`lib.rs:375-383`):
+
+```rust
+if let Err(error) = connectivity::Monitor::init(connectivity_monitor)
+    .run(Arc::downgrade(&tunnel))
+    .await
+{
+    log::error!("Connectivity monitor failed: {}", error);
+}
+```
+
+## Tunnel Statistics
+
+Tunnel statistics are retrieved via the `Tunnel` trait:
+
+```rust
+#[async_trait]
+pub trait Tunnel: Send + Sync {
+    fn get_interface_name(&self) -> String;
+    fn stop(self: Box<Self>) -> Result<(), TunnelError>;
+    async fn get_tunnel_stats(&self) -> Result<StatsMap, TunnelError>;
+    fn set_config<'a>(
+        &'a mut self,
+        config: Config,
+        daita: Option<DaitaSettings>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), TunnelError>> + Send + 'a>>;
+}
+```
+
+Stats include per-peer traffic counters and DAITA overhead information (`lib.rs:1026-1071`).
+
+## Error Handling
+
+### Recoverable Errors
+
+Certain errors allow automatic retry (`lib.rs:103-119`):
+
+```rust
+impl Error {
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            Error::ObfuscationError(_) => true,
+            Error::EphemeralPeerNegotiationError(_) => true,
+            Error::TunnelError(TunnelError::RecoverableStartWireguardError(..)) => true,
+            Error::SetupRoutingError(error) => error.is_recoverable(),
+            #[cfg(target_os = "android")]
+            Error::TunnelError(TunnelError::BypassError(_)) => true,
+            #[cfg(windows)]
+            Error::TunnelError(TunnelError::SetupTunnelDevice(_)) => true,
+            _ => false,
+        }
+    }
+}
+```
+
+### Close Messages
+
+Tunnel shutdown is coordinated via channels (`lib.rs:1073-1081`):
+
+```rust
+enum CloseMsg {
+    Stop,
+    EphemeralPeerNegotiationTimeout,
+    PingErr,
+    SetupError(Error),
+    ObfuscatorExpired,
+    ObfuscatorFailed(Error),
+}
+```
+
+## wireguard-go Integration
+
+### FFI Bindings
+
+The `wireguard-go-rs` crate (`wireguard-go-rs/src/lib.rs`) provides Rust bindings to wireguard-go:
+
+```rust
+pub struct Tunnel {
+    handle: i32,
+    #[cfg(target_os = "windows")]
+    assigned_name: CString,
+    #[cfg(target_os = "windows")]
+    luid: NET_LUID_LH,
+}
+
+impl Tunnel {
+    pub fn turn_on(
+        settings: &CStr,
+        device: OwnedFd,
+        logging_callback: Option<LoggingCallback>,
+        logging_context: LoggingContext,
+    ) -> Result<Self, Error>
+    
+    pub fn get_config<T>(&self, f: impl FnOnce(&CStr) -> T) -> Option<T>
+    pub fn set_config(&self, config: &CStr) -> Result<(), Error>
+    
+    #[cfg(daita)]
+    pub fn activate_daita(
+        &self,
+        peer_public_key: &[u8; 32],
+        machines: &CStr,
+        max_padding_frac: f64,
+        max_blocking_frac: f64,
+        events_capacity: u32,
+        actions_capacity: u32,
+    ) -> Result<(), Error>
+}
+```
+
+### Configuration Management
+
+Configuration updates use the userspace format:
+
+```rust
+pub fn set_config(&self, config: &Config) -> Result<(), Error> {
+    let config_str = config.to_userspace_format();
+    unsafe { ffi::wgSetConfig(self.handle, config_str.as_ptr()) }
+}
+```
+
+## Related Documentation
+
+- [Quantum-Resistant Tunnels](./quantum-resistant.mdx) - Post-quantum cryptography and ephemeral peer negotiation
+- [Obfuscation Protocols](./obfuscation-protocols.mdx) - UDP2TCP, Shadowsocks, QUIC, and LWO implementations
+- Security Documentation: `docs/security.md` in source repository

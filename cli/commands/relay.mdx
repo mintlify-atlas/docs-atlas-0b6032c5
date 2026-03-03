@@ -1,0 +1,396 @@
+---
+title: "mullvad relay"
+description: "Configure relay selection and manage relay constraints"
+---
+
+## Overview
+
+The `mullvad relay` command manages relay selection constraints including location, provider, ownership, and custom relay configurations.
+
+## Syntax
+
+```bash
+mullvad relay <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display current relay constraints:
+
+```bash
+mullvad relay get
+```
+
+### set
+
+Configure relay constraints:
+
+```bash
+mullvad relay set <CONSTRAINT>
+```
+
+### list
+
+List all available relays:
+
+```bash
+mullvad relay list
+```
+
+### update
+
+Update the relay list from Mullvad API:
+
+```bash
+mullvad relay update
+```
+
+### override
+
+Manage custom IP overrides for specific relays:
+
+```bash
+mullvad relay override <SUBCOMMAND>
+```
+
+## Set Subcommands
+
+### location
+
+Select relay by country, city, or hostname:
+
+```bash
+mullvad relay set location <COUNTRY> [CITY] [HOSTNAME]
+mullvad relay set location <HOSTNAME>
+```
+
+**Examples:**
+- `mullvad relay set location se` - Select any relay in Sweden
+- `mullvad relay set location se got` - Select relay in Gothenburg, Sweden
+- `mullvad relay set location se got se-got-wg-004` - Select specific relay
+- `mullvad relay set location se-got-wg-004` - Select by hostname only
+
+### custom-list
+
+Use a custom list for relay selection:
+
+```bash
+mullvad relay set custom-list <LIST_NAME>
+```
+
+See [custom-list](/cli/commands/custom-list) for managing lists.
+
+### provider
+
+Filter relays by hosting provider:
+
+```bash
+mullvad relay set provider <PROVIDER>...
+```
+
+**Arguments:**
+- `<PROVIDER>...` - One or more provider names, or "any"
+
+**Example:**
+```bash
+mullvad relay set provider 31173 DataPacket
+```
+
+### ownership
+
+Filter relays by ownership:
+
+```bash
+mullvad relay set ownership <OWNERSHIP>
+```
+
+**Values:**
+- `any` - Any relay (owned or rented)
+- `owned` - Only Mullvad-owned servers
+- `rented` - Only rented servers
+
+### ip-version
+
+Set IP protocol preference:
+
+```bash
+mullvad relay set ip-version <VERSION>
+```
+
+**Values:**
+- `any` - IPv4 or IPv6
+- `ipv4` - IPv4 only
+- `ipv6` - IPv6 only
+
+### multihop
+
+Enable or disable multihop (double VPN):
+
+```bash
+mullvad relay set multihop <on|off>
+```
+
+### entry
+
+Configure entry relay for multihop:
+
+```bash
+mullvad relay set entry location <COUNTRY> [CITY] [HOSTNAME]
+mullvad relay set entry custom-list <LIST_NAME>
+```
+
+Same location format as `set location`.
+
+### custom
+
+Configure a custom WireGuard relay:
+
+```bash
+mullvad relay set custom <HOST> <PORT> <PEER_PUBKEY> <TUNNEL_IP>... [OPTIONS]
+```
+
+**Arguments:**
+- `<HOST>` - Hostname or IP address
+- `<PORT>` - Remote port number
+- `<PEER_PUBKEY>` - Base64-encoded WireGuard public key
+- `<TUNNEL_IP>...` - One or more tunnel IP addresses
+
+**Options:**
+- `--v4-gateway <IPV4>` - IPv4 gateway address (required)
+- `--v6-gateway <IPV6>` - IPv6 gateway address (optional)
+
+The command reads the private key from standard input.
+
+## Override Subcommands
+
+### override get
+
+Show current relay IP overrides:
+
+```bash
+mullvad relay override get
+```
+
+### override set
+
+Set custom IP for a relay:
+
+```bash
+mullvad relay override set ipv4 <HOSTNAME> <ADDRESS>
+mullvad relay override set ipv6 <HOSTNAME> <ADDRESS>
+```
+
+### override unset
+
+Remove IP override for a relay:
+
+```bash
+mullvad relay override unset ipv4 <HOSTNAME>
+mullvad relay override unset ipv6 <HOSTNAME>
+```
+
+### override clear-all
+
+Remove all relay overrides:
+
+```bash
+mullvad relay override clear-all [--confirm]
+```
+
+**Options:**
+- `-y`, `--confirm` - Skip confirmation prompt
+
+## Examples
+
+### Display Current Constraints
+
+```bash
+mullvad relay get
+```
+
+Output:
+```
+Generic constraints
+        Location: Gothenburg, Sweden (got, se)
+        Provider(s): any
+        Ownership: any
+WireGuard constraints
+        IP protocol: any
+        Multihop state: disabled
+```
+
+### List Available Relays
+
+```bash
+mullvad relay list
+```
+
+Output:
+```
+Sweden (se)
+        Gothenburg (got) @ 57.70887°N, 11.97456°W
+                se-got-wg-001 (10.10.1.1, 2a03:...) - hosted by 31173 (Mullvad-owned)
+                se-got-wg-004 (10.10.1.4, 2a03:...) - hosted by 31173 (Mullvad-owned)
+
+United States (us)
+        New York (nyc) @ 40.71427°N, -74.00597°W
+                us-nyc-wg-301 (10.20.1.1) - hosted by M247 (rented)
+```
+
+### Select Relay by Location
+
+Select country:
+
+```bash
+mullvad relay set location se
+```
+
+Select city:
+
+```bash
+mullvad relay set location us nyc
+```
+
+Select specific relay:
+
+```bash
+mullvad relay set location se-got-wg-004
+```
+
+### Configure Multihop
+
+Enable multihop:
+
+```bash
+mullvad relay set multihop on
+```
+
+Set entry location:
+
+```bash
+mullvad relay set entry location se
+```
+
+Set exit location (regular location constraint):
+
+```bash
+mullvad relay set location us
+```
+
+### Filter by Provider
+
+```bash
+mullvad relay set provider 31173
+```
+
+### Filter by Ownership
+
+Only owned servers:
+
+```bash
+mullvad relay set ownership owned
+```
+
+Only rented servers:
+
+```bash
+mullvad relay set ownership rented
+```
+
+### Update Relay List
+
+```bash
+mullvad relay update
+```
+
+Output:
+```
+Updating relay list in the background...
+```
+
+### Set Custom Relay
+
+```bash
+echo "private-key-base64" | mullvad relay set custom \
+  vpn.example.com \
+  51820 \
+  peer-public-key-base64 \
+  10.64.0.1 fc00::1 \
+  --v4-gateway 10.64.0.1 \
+  --v6-gateway fc00::1
+```
+
+### Override Relay IP
+
+Set custom IPv4:
+
+```bash
+mullvad relay override set ipv4 se-got-wg-004 10.10.10.10
+```
+
+Set custom IPv6:
+
+```bash
+mullvad relay override set ipv6 se-got-wg-004 2a03:1b20:5:f011::a10f
+```
+
+### View Overrides
+
+```bash
+mullvad relay override get
+```
+
+Output:
+```
+Sweden (se)
+    Gothenburg (got)
+        se-got-wg-004:
+            ipv4: 10.10.10.10
+            ipv6: 2a03:1b20:5:f011::a10f
+```
+
+### Remove Override
+
+```bash
+mullvad relay override unset ipv4 se-got-wg-004
+```
+
+### Clear All Overrides
+
+```bash
+mullvad relay override clear-all
+```
+
+Output:
+```
+Are you sure you want to clear all overrides? [Y/n]
+```
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect using current relay constraints
+- [status](/cli/commands/status) - View currently connected relay
+- [custom-list](/cli/commands/custom-list) - Manage custom relay lists
+- [tunnel](/cli/commands/tunnel) - Configure tunnel options
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Command executed successfully |
+| 1 | Invalid location, provider, or configuration |
+
+## Notes
+
+- Relay selection is hierarchical: location → provider → ownership → IP version
+- Setting a custom endpoint removes all other constraints
+- Multihop requires WireGuard and uses two relays (entry and exit)
+- Overrides are useful for testing or accessing relays with special network configurations
+- The relay list is cached locally and updated periodically
+- Invalid locations are validated against the current relay list
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/relay.rs`

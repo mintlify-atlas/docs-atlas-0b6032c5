@@ -1,0 +1,689 @@
+---
+title: Offline Detection
+description: Platform-specific mechanisms for detecting when the device has no network connectivity
+---
+
+## Overview
+
+The offline monitor detects when the device has no network connectivity, allowing the tunnel state machine to avoid futile connection attempts and properly inform the user. Each platform uses different mechanisms to achieve reliable offline detection without generating network traffic.
+
+Reference: `talpid-core/src/offline/mod.rs`, `docs/architecture.md:218-269`
+
+## Design Principles
+
+### No Network Traffic
+
+The offline monitor must not send any network traffic to determine offline state:
+
+- Cannot perform ping tests
+- Cannot attempt DNS lookups
+- Cannot connect to remote servers
+
+This ensures:
+- No information leakage during offline detection
+- No interference with firewall policies
+- Reliable operation in secured states
+
+Reference: `docs/architecture.md:220-223`
+
+### Platform-Specific Implementation
+
+Each platform provides different APIs and mechanisms:
+
+- **Windows**: Route table monitoring + power state tracking
+- **Linux**: Route queries via Netlink with firewall mark
+- **macOS**: System Configuration framework with synthetic offline periods
+- **Android**: ConnectivityManager network callbacks
+- **iOS**: NWPathMonitor (via WireGuard Kit)
+
+Reference: `talpid-core/src/offline/mod.rs:9-23`
+
+## Windows Implementation
+
+### Detection Strategy
+
+Connectivity is inferred if:
+1. A default route exists, AND
+2. The machine is not suspended
+
+Reference: `docs/architecture.md:226-229`
+
+### Route Monitoring
+
+```rust
+// talpid-core/src/offline/windows.rs
+use talpid_routing::{RouteManagerHandle, get_best_default_route};
+use talpid_windows::net::AddressFamily;
+
+fn check_initial_connectivity() -> (bool, bool) {
+    let v4_connectivity = get_best_default_route(AddressFamily::Ipv4)
+        .map(|route| route.is_some())
+        .unwrap_or(true); // Fail open
+        
+    let v6_connectivity = get_best_default_route(AddressFamily::Ipv6)
+        .map(|route| route.is_some())
+        .unwrap_or(true); // Fail open
+        
+    (v4_connectivity, v6_connectivity)
+}
+```
+
+Reference: `talpid-core/src/offline/windows.rs:79-99`
+
+**NotifyRouteChange2** API:
+
+Listens for default route changes via Windows networking API:
+
+```rust
+use talpid_routing::{CallbackHandle, EventType, RouteManagerHandle};
+
+async fn setup_network_connectivity_listener(
+    system_state: Arc<Mutex<SystemState>>,
+    route_manager: RouteManagerHandle,
+) -> Result<CallbackHandle, Error> {
+    let callback_handle = route_manager
+        .add_default_route_change_callback(
+            move |event| {
+                // Handle route change
+            }
+        )
+        .await?;
+    Ok(callback_handle)
+}
+```
+
+Receives callbacks whenever a default route is:
+- Added
+- Removed
+- Modified
+
+Reference: `talpid-core/src/offline/windows.rs:69-77`, [`NotifyRouteChange2` docs](https://docs.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-notifyroutechange2)
+
+### Power State Tracking
+
+The machine is considered offline after suspend until a grace period expires:
+
+```rust
+use crate::window::{PowerManagementEvent, PowerManagementListener};
+
+tokio::spawn(async move {
+    while let Some(event) = power_mgmt_rx.next().await {
+        match event {
+            PowerManagementEvent::Suspend => {
+                // Mark as offline
+                apply_system_state_change(state.clone(), StateChange::Suspended(true));
+            }
+            PowerManagementEvent::ResumeAutomatic => {
+                // Wait for tunnel device to reinitialize (5 seconds)
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                apply_system_state_change(state_copy, StateChange::Suspended(false));
+            }
+            _ => (),
+        }
+    }
+});
+```
+
+**Why the grace period?**
+
+Tunnel device drivers may not work correctly immediately after wakeup. The 5-second offline period ensures the system is fully ready before attempting to connect.
+
+Reference: `talpid-core/src/offline/windows.rs:46-67`, `docs/architecture.md:230-236`
+
+### State Tracking
+
+```rust
+struct ConnectivityInner {
+    ipv4: bool,      // Default IPv4 route exists
+    ipv6: bool,      // Default IPv6 route exists
+    suspended: bool, // In grace period after resume
+}
+
+impl ConnectivityInner {
+    fn into_connectivity(self) -> Connectivity {
+        if self.suspended {
+            return Connectivity::Offline;
+        }
+        Connectivity::new(self.ipv4, self.ipv6)
+    }
+}
+```
+
+If suspended, always reports offline regardless of routes.
+
+Reference: `talpid-core/src/offline/windows.rs:35-39`
+
+## Linux Implementation
+
+### Detection Strategy
+
+Connectivity is inferred by checking if a route exists to a public IP address:
+
+- Query: "Is there a route to `193.138.218.78` (Mullvad API)?"
+- Route query uses **exclusion firewall mark**
+- Without the mark, query would always succeed in connected state (route via tunnel)
+
+Reference: `docs/architecture.md:239-245`
+
+### Netlink Route Query
+
+```rust
+// talpid-core/src/offline/linux.rs
+use talpid_routing::RouteManagerHandle;
+
+const PUBLIC_INTERNET_ADDRESS_V4: IpAddr = IpAddr::V4(Ipv4Addr::new(193, 138, 218, 78));
+const PUBLIC_INTERNET_ADDRESS_V6: IpAddr = 
+    IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6));
+
+async fn check_connectivity(
+    handle: &RouteManagerHandle,
+    fwmark: Option<u32>,
+) -> Connectivity {
+    let route_exists = |destination| async move {
+        handle
+            .get_destination_route(destination, fwmark)
+            .await
+            .map(|route| route.is_some())
+    };
+
+    match (
+        route_exists(PUBLIC_INTERNET_ADDRESS_V4).await,
+        route_exists(PUBLIC_INTERNET_ADDRESS_V6).await,
+    ) {
+        (Ok(ipv4), Ok(ipv6)) => Connectivity::new(ipv4, ipv6),
+        (Err(err), _) => {
+            log::error!("Failed to verify offline state: {}. Presuming connectivity", err);
+            Connectivity::PresumeOnline
+        }
+        (Ok(ipv4), Err(err)) => {
+            log::trace!("Failed to infer IPv6 state. Assuming unavailable");
+            Connectivity::new(ipv4, false)
+        }
+    }
+}
+```
+
+Reference: `talpid-core/src/offline/linux.rs:24-100`
+
+### Firewall Mark Coupling
+
+The offline monitor is coupled to routing and split tunneling on Linux:
+
+- Uses the same firewall mark as excluded processes
+- Route query bypasses tunnel routing table
+- Ensures accurate offline detection even when tunnel is connected
+
+Reference: `docs/architecture.md:242-245`
+
+### Change Listener
+
+```rust
+pub async fn spawn_monitor(
+    notify_tx: UnboundedSender<Connectivity>,
+    route_manager: RouteManagerHandle,
+    fwmark: Option<u32>,
+) -> Result<MonitorHandle> {
+    let mut connectivity = check_connectivity(&route_manager, fwmark).await;
+
+    let mut listener = route_manager
+        .change_listener()
+        .await
+        .map_err(Error::RouteManagerError)?;
+
+    tokio::spawn(async move {
+        while let Some(_event) = listener.next().await {
+            let new_connectivity = check_connectivity(&route_manager, fwmark).await;
+            if new_connectivity != connectivity {
+                connectivity = new_connectivity;
+                let _ = sender.unbounded_send(connectivity);
+            }
+        }
+    });
+
+    Ok(monitor_handle)
+}
+```
+
+Listens for routing table changes via Netlink and rechecks connectivity.
+
+Reference: `talpid-core/src/offline/linux.rs:35-71`
+
+## macOS Implementation
+
+### Detection Strategy
+
+Detects offline state using `SCDynamicStore` to check for active network services:
+
+```rust
+// talpid-core/src/offline/macos.rs
+use talpid_routing::{DefaultRouteEvent, RouteManagerHandle};
+
+pub async fn spawn_monitor(
+    notify_tx: UnboundedSender<Connectivity>,
+    route_manager: RouteManagerHandle,
+) -> Result<MonitorHandle, Error> {
+    let route_listener = route_manager.default_route_listener().await?;
+
+    let (ipv4, ipv6) = match route_manager.get_default_routes().await {
+        Ok((v4_route, v6_route)) => (v4_route.is_some(), v6_route.is_some()),
+        Err(error) => {
+            log::warn!("Failed to initialize offline monitor: {error}");
+            (true, true) // Fail open
+        }
+    };
+    
+    // ...
+}
+```
+
+Reference: `talpid-core/src/offline/macos.rs:64-81`, [`SCDynamicStore` docs](https://developer.apple.com/documentation/systemconfiguration/scdynamicstore-gb2)
+
+### Synthetic Offline Period
+
+A major issue on macOS: the app can get stuck offline after network changes due to DNS blocking.
+
+**The Problem:**
+
+After waking from sleep or switching networks:
+1. macOS performs connectivity checks (including DNS queries)
+2. Mullvad's firewall blocks DNS (security policy)
+3. macOS's checks time out, delaying route publication
+4. Network reachability callback not invoked until timeouts complete
+5. App thinks it's offline for extended period
+
+Reference: `docs/architecture.md:252-259`, `talpid-core/src/offline/macos.rs:1-10`
+
+**The Solution:**
+
+Synthesize a brief offline state between network transitions:
+
+```rust
+const SYNTHETIC_OFFLINE_DURATION: Duration = Duration::from_secs(1);
+
+tokio::spawn(async move {
+    let mut timeout = Fuse::terminated();
+    let mut route_listener = route_listener.fuse();
+
+    loop {
+        select! {
+            _ = timeout => {
+                // Synthetic offline period expired, mark as online
+                if let Some((state, notify_tx)) = weak_state.upgrade()
+                    .zip(weak_notify_tx.upgrade())
+                {
+                    let mut state = state.lock().unwrap();
+                    *state = real_state;
+                    let _ = notify_tx.unbounded_send(state.into_connectivity());
+                }
+                timeout = Fuse::terminated();
+            }
+            route_event = route_listener.next() => {
+                match route_event {
+                    Some(DefaultRouteEvent::Updated { v4, v6 }) => {
+                        // Update real state
+                        real_state = ConnectivityInner { 
+                            ipv4: v4.is_some(), 
+                            ipv6: v6.is_some() 
+                        };
+                        
+                        // Was offline, now going online
+                        if !state.is_online() && real_state.is_online() {
+                            // Synthesize brief offline period
+                            timeout = tokio::time::sleep(SYNTHETIC_OFFLINE_DURATION)
+                                .fuse();
+                        } else {
+                            // Immediate update
+                            *state = real_state;
+                            let _ = notify_tx.unbounded_send(state.into_connectivity());
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+});
+```
+
+The 1-second synthetic offline period:
+- Prevents DNS blocking from delaying connectivity
+- Allows macOS connectivity checks to complete
+- Ensures default route is available before connecting
+
+Reference: `talpid-core/src/offline/macos.rs:24,92-131`
+
+### Route Listener
+
+Uses `RouteManagerHandle::default_route_listener()` to observe default route changes:
+
+- Receives `DefaultRouteEvent::Updated` with IPv4/IPv6 route information
+- No active polling required
+- Efficient, event-driven design
+
+Reference: `talpid-core/src/offline/macos.rs:71`, [`RouteManagerHandle::default_route_listener` docs](https://docs.rs/talpid-routing/latest/talpid_routing/struct.RouteManagerHandle.html#method.default_route_listener)
+
+## Android Implementation
+
+### Detection Strategy
+
+Relies on Android's `ConnectivityManager` API:
+
+```rust
+// talpid-core/src/offline/android.rs
+use crate::connectivity_listener::ConnectivityListener;
+
+pub struct MonitorHandle {
+    connectivity_listener: ConnectivityListener,
+}
+
+impl MonitorHandle {
+    pub async fn connectivity(&self) -> Connectivity {
+        self.connectivity_listener.connectivity()
+    }
+}
+
+pub async fn spawn_monitor(
+    sender: UnboundedSender<Connectivity>,
+    connectivity_listener: ConnectivityListener,
+) -> Result<MonitorHandle, Error> {
+    let mut monitor_handle = MonitorHandle::new(connectivity_listener);
+    monitor_handle
+        .connectivity_listener
+        .set_connectivity_listener(sender);
+    Ok(monitor_handle)
+}
+```
+
+Reference: `talpid-core/src/offline/android.rs:1-32`, [`ConnectivityManager` docs](https://developer.android.com/reference/android/net/ConnectivityManager)
+
+### Connectivity Listener
+
+The `ConnectivityListener` (Kotlin/Java) registers callbacks with Android:
+
+```kotlin
+// android/lib/talpid/src/main/kotlin/net/mullvad/talpid/ConnectivityListener.kt
+class ConnectivityListener(context: Context) {
+    private val connectivityManager = 
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            // Non-VPN network with internet available
+            notifyConnectivityChange(true)
+        }
+        
+        override fun onLost(network: Network) {
+            // Network lost
+            checkConnectivity()
+        }
+    }
+    
+    fun startListening() {
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        
+        connectivityManager.registerNetworkCallback(request, networkCallback)
+    }
+}
+```
+
+**Key constraints:**
+- `NET_CAPABILITY_INTERNET`: Network provides internet connectivity
+- `NET_CAPABILITY_NOT_VPN`: Excludes VPN networks (only physical networks)
+
+Connectivity is inferred if any non-VPN network with internet exists.
+
+Reference: `docs/architecture.md:261-264`
+
+## iOS Implementation
+
+### Detection Strategy
+
+The iOS app uses WireGuard Kit's offline detection, which internally uses `NWPathMonitor`:
+
+```swift
+// ios/PacketTunnelProvider.swift
+import NetworkExtension
+import Network
+
+class PacketTunnelProvider: NEPacketTunnelProvider {
+    private let pathMonitor = NWPathMonitor()
+    
+    func startMonitoring() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let isOnline = path.status == .satisfied
+            self?.handleConnectivityChange(isOnline)
+        }
+        pathMonitor.start(queue: monitorQueue)
+    }
+}
+```
+
+Reference: `docs/architecture.md:266-269`, [`NWPathMonitor` docs](https://developer.apple.com/documentation/network/nwpathmonitor)
+
+### Path Status
+
+`NWPathMonitor` provides:
+
+- `satisfied`: Default route exists, connectivity likely
+- `unsatisfied`: No default route
+- `requiresConnection`: Connection needs to be established
+
+The app assumes connectivity if status is `satisfied`.
+
+## Connectivity Type
+
+The offline monitor reports connectivity as:
+
+```rust
+pub enum Connectivity {
+    PresumeOnline,    // Assume online (fail open)
+    Offline,          // Definitively offline
+    Online { ipv4: bool, ipv6: bool }, // Online with specific protocols
+}
+
+impl Connectivity {
+    pub fn new(ipv4: bool, ipv6: bool) -> Self {
+        match (ipv4, ipv6) {
+            (false, false) => Connectivity::Offline,
+            (ipv4, ipv6) => Connectivity::Online { ipv4, ipv6 },
+        }
+    }
+    
+    pub fn is_online(&self) -> bool {
+        !matches!(self, Connectivity::Offline)
+    }
+}
+```
+
+Reference: `talpid-types/src/net.rs`
+
+### IPv4 vs IPv6
+
+Most platforms track IPv4 and IPv6 connectivity separately:
+
+- Allows IPv6-only or IPv4-only selection
+- Prevents connection attempts when protocol unavailable
+- Informs relay selection algorithm
+
+## Tunnel State Machine Integration
+
+The offline monitor sends connectivity updates to the tunnel state machine:
+
+```rust
+use futures::channel::mpsc::UnboundedSender;
+
+pub async fn spawn_monitor(
+    sender: UnboundedSender<Connectivity>,
+    // ... platform-specific parameters ...
+) -> MonitorHandle {
+    // Monitor runs in background
+    tokio::spawn(async move {
+        loop {
+            // Detect connectivity change
+            let new_connectivity = determine_connectivity().await;
+            
+            // Notify tunnel state machine
+            let _ = sender.unbounded_send(new_connectivity);
+        }
+    });
+    // ...
+}
+```
+
+Reference: `talpid-core/src/offline/mod.rs:43-72`
+
+### State Machine Response
+
+When the tunnel state machine receives offline notification:
+
+- **Connecting state**: Stop attempting connection, enter offline wait
+- **Connected state**: Depends on offline timeout settings
+- **Error state**: May stay in error (already blocking)
+- **Disconnecting/Disconnected**: No action needed
+
+When online notification received:
+
+- Resume connection attempts
+- Retry with current relay selection
+
+Reference: `docs/architecture.md:167-170`
+
+## Fail-Open Strategy
+
+All platform implementations "fail open" when uncertain:
+
+```rust
+let connectivity = check_connectivity().unwrap_or_else(|error| {
+    log::error!("Failed to determine connectivity: {}", error);
+    Connectivity::PresumeOnline  // Assume online on errors
+});
+```
+
+**Why fail open?**
+
+- Prevents blocking the user when offline detection fails
+- Connectivity attempts may still succeed
+- User experience is better than being stuck
+- Security is not compromised (firewall still active)
+
+Reference: `talpid-core/src/offline/linux.rs:86-92`, `windows.rs:86-87,94-97`
+
+## Disabling Offline Monitor
+
+For debugging, the offline monitor can be disabled:
+
+```bash
+export TALPID_DISABLE_OFFLINE_MONITOR=1
+```
+
+When disabled:
+- Always reports `Connectivity::PresumeOnline`
+- Tunnel state machine never enters offline wait
+- Useful for debugging connectivity issues
+
+Reference: `talpid-core/src/offline/mod.rs:26-30,49-51`
+
+## API Communication Coordination
+
+The offline monitor also affects API communication:
+
+- API requests blocked when offline
+- Prevents wasted connection attempts
+- Resumes when connectivity restored
+
+See [API Communication](/architecture/components/api-communication) for details.
+
+Reference: `docs/architecture.md:61-62`
+
+## Performance Considerations
+
+### Event-Driven Design
+
+All implementations use event-driven approaches:
+
+- No polling loops
+- Low CPU usage
+- Immediate response to connectivity changes
+
+### Minimal Overhead
+
+- No network traffic generated
+- Uses platform-native APIs
+- Efficient state tracking
+
+## Testing and Debugging
+
+### Simulating Offline State
+
+**Network disconnect:**
+```bash
+# Linux
+sudo ip link set eth0 down
+
+# macOS
+sudo ifconfig en0 down
+
+# Windows
+Disable-NetAdapter -Name "Ethernet"
+```
+
+**Remove default route:**
+```bash
+# Linux
+sudo ip route del default
+
+# macOS  
+sudo route delete default
+```
+
+### Monitoring Events
+
+Enable debug logging to see offline detection events:
+
+```bash
+export TALPID_LOG_LEVEL=debug
+```
+
+Look for log messages like:
+```
+[DEBUG] Connectivity changed: Offline
+[DEBUG] Connectivity changed: Online { ipv4: true, ipv6: false }
+```
+
+## Common Issues
+
+### macOS Stuck Offline
+
+If the app remains offline on macOS after network changes:
+
+1. Check if DNS is being blocked by firewall
+2. Verify synthetic offline period is working
+3. Consider [allowing macOS network check](/docs/allow-macos-network-check.md)
+
+Reference: `docs/allow-macos-network-check.md`
+
+### Linux False Positives
+
+If offline detection incorrectly reports online:
+
+1. Verify firewall mark is set correctly
+2. Check if split tunneling configuration is correct
+3. Ensure routing tables are properly configured
+
+### Windows Sleep/Wake Issues
+
+If connections fail after waking from sleep:
+
+1. Check if grace period is sufficient (default 5 seconds)
+2. Verify power management events are being received
+3. Consider increasing grace period for slow hardware
+
+## Related Documentation
+
+- [Mullvad vs Talpid Layers](/architecture/components/mullvad-vs-talpid)
+- [API Communication](/architecture/components/api-communication)
+- [Architecture Overview](/docs/architecture.md) (source repository)
+- [Allow macOS Network Check](/docs/allow-macos-network-check.md) (source repository)

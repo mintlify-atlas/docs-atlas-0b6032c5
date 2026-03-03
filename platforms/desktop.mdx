@@ -1,0 +1,376 @@
+---
+title: Desktop Applications
+description: Complete guide to using Mullvad VPN on Windows, macOS, and Linux
+---
+
+Mullvad VPN provides native desktop applications for Windows, macOS, and Linux, offering a full-featured graphical interface backed by a robust system service.
+
+## Supported Operating Systems
+
+### Windows
+
+- Windows 10
+- Windows 11
+
+### macOS
+
+- The three latest major releases
+
+### Linux
+
+| Distribution | Supported Versions |
+|--------------|-------------------|
+| Ubuntu | The two latest LTS releases and the latest non-LTS releases |
+| Fedora | Versions not yet [EOL](https://fedoraproject.org/wiki/End_of_life) |
+| Debian | 12 and newer |
+
+<Note>
+  Linux testing is performed using the Gnome desktop environment. Other desktop environments should work but are not regularly tested.
+</Note>
+
+## Architecture
+
+The desktop application consists of three main components:
+
+### System Service (mullvad-daemon)
+
+The core VPN service that runs with system privileges:
+
+- **Location**: Runs as a system service/daemon
+- **Privileges**: Requires administrator/root access
+- **Always Running**: Operates continuously in the background, even when GUI is closed
+- **Management Interface**: Exposes control via Unix domain sockets (Linux/macOS) or named pipes (Windows)
+- **Responsibilities**:
+  - Tunnel management
+  - Firewall rule configuration
+  - DNS settings management
+  - Kill switch enforcement
+  - API communication
+
+### Graphical User Interface (GUI)
+
+An Electron-based desktop application:
+
+- **Technology**: Built with Electron + React
+- **Security**: Only loads local resources, never remote content
+- **Communication**: Connects exclusively to `mullvad-daemon` via management interface
+- **Per-User Settings**: Stores GUI preferences separately for each user
+- **Location**: 
+  - Linux: `$XDG_CONFIG_HOME/Mullvad VPN/gui_settings.json`
+  - macOS: `~/Library/Application Support/Mullvad VPN/gui_settings.json`
+  - Windows: `%LOCALAPPDATA%\Mullvad VPN\gui_settings.json`
+
+### Command-Line Interface (CLI)
+
+A Rust-based terminal interface:
+
+- **Binary Name**: `mullvad`
+- **Full Control**: Access to all daemon functionality
+- **Automation**: Ideal for scripts and automation
+- **See**: [CLI documentation](/platforms/cli) for complete reference
+
+## Installation
+
+### Windows
+
+1. Download the installer from [mullvad.net/download](https://mullvad.net/download/)
+2. Run the `.exe` installer
+3. The installer will:
+   - Install the system service
+   - Configure Windows Firewall Integration (WFP)
+   - Create Start Menu shortcuts
+   - Set up auto-start (optional)
+
+### macOS
+
+1. Download the `.pkg` installer from [mullvad.net/download](https://mullvad.net/download/)
+2. Open and run the installer package
+3. The installer will:
+   - Install the system service as a LaunchDaemon
+   - Configure Packet Filter (PF) integration
+   - Install the application to `/Applications`
+
+### Linux
+
+#### Debian/Ubuntu
+
+```bash
+# Download the .deb package
+wget https://mullvad.net/download/app/deb/latest
+
+# Install using apt
+sudo apt install ./mullvad-vpn_*.deb
+```
+
+#### Fedora
+
+```bash
+# Download the .rpm package
+wget https://mullvad.net/download/app/rpm/latest
+
+# Install using dnf
+sudo dnf install ./mullvad-vpn-*.rpm
+```
+
+#### Arch Linux
+
+Available in the AUR:
+
+```bash
+yay -S mullvad-vpn
+```
+
+The Linux installation includes:
+- Systemd service: `mullvad-daemon.service`
+- nftables firewall integration
+- Desktop entry for application menu
+
+## Features
+
+### Firewall Integration
+
+Desktop platforms have direct firewall access for maximum security:
+
+- **Windows**: Windows Filtering Platform (WFP)
+- **macOS**: Packet Filter (PF)
+- **Linux**: nftables
+
+**Atomic Transactions**: All firewall changes are applied atomically, ensuring no leak windows during transitions.
+
+### Kill Switch
+
+Always-on kill switch prevents leaks:
+
+- **Automatic**: Enabled by default, cannot be disabled
+- **Blocks All Traffic**: When connecting, disconnecting, or in error state
+- **No Leak Windows**: Atomic firewall transactions prevent gaps
+- **See**: [Security documentation](/architecture/security) for details
+
+### Lockdown Mode
+
+Blocks all network access when disconnected:
+
+- **Purpose**: Ensures device can only communicate via VPN
+- **Setting**: Enable in app settings
+- **Effect**: Applies firewall rules even in disconnected state
+
+### Split Tunneling
+
+Allow specific applications to bypass the VPN:
+
+- **Platform Support**: Windows, macOS, and Linux
+- **Use Cases**: 
+  - Local network services
+  - Applications requiring direct internet access
+  - Performance-sensitive applications
+- **Configuration**: Available in app settings or via CLI
+
+### Custom DNS
+
+Configure custom DNS servers:
+
+- **Default**: Uses VPN server's DNS
+- **Custom Options**: 
+  - Custom DNS servers (through tunnel)
+  - DNS content blocking (ads, trackers, malware)
+- **Leak Protection**: DNS queries always go through tunnel
+
+### Local Network Sharing
+
+Allow access to local network devices:
+
+- **When Enabled**: Traffic to private IP ranges is allowed
+- **Use Cases**: 
+  - Printers
+  - File shares
+  - IoT devices
+- **IP Ranges**: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local addresses
+
+### WireGuard Features
+
+All desktop platforms support advanced WireGuard features:
+
+- **Multihop**: Route through two VPN servers
+- **Quantum-Resistant**: Post-quantum cryptography support
+- **Transport Options**: TCP, Shadowsocks, QUIC obfuscation
+- **DAITA**: Defense Against AI-Guided Traffic Analysis
+- **LWO**: Lightweight WireGuard Obfuscation
+
+## System Service Management
+
+### Windows
+
+Manage via Services or command line:
+
+```cmd
+# Stop the service
+sc.exe stop mullvadvpn
+
+# Start the service
+sc.exe start mullvadvpn
+
+# Check status
+sc.exe query mullvadvpn
+```
+
+### macOS
+
+Manage via launchctl:
+
+```bash
+# Stop the service
+sudo launchctl unload -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+
+# Start the service
+sudo launchctl load -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+
+# Check status
+sudo launchctl list | grep mullvad
+```
+
+### Linux
+
+Manage via systemd:
+
+```bash
+# Stop the service
+sudo systemctl stop mullvad-daemon
+
+# Start the service
+sudo systemctl start mullvad-daemon
+
+# Enable at boot
+sudo systemctl enable mullvad-daemon
+
+# Check status
+sudo systemctl status mullvad-daemon
+```
+
+## File Locations
+
+### Settings
+
+| Platform | Path |
+|----------|------|
+| Linux | `/etc/mullvad-vpn/` |
+| macOS | `/etc/mullvad-vpn/` |
+| Windows | `%LOCALAPPDATA%\Mullvad VPN\` |
+
+### Logs
+
+| Platform | Path |
+|----------|------|
+| Linux | `/var/log/mullvad-vpn/` + systemd journal |
+| macOS | `/var/log/mullvad-vpn/` |
+| Windows | `C:\ProgramData\Mullvad VPN\` |
+
+### Cache
+
+| Platform | Path |
+|----------|------|
+| Linux | `/var/cache/mullvad-vpn/` |
+| macOS | `/Library/Caches/mullvad-vpn/` |
+| Windows | `C:\ProgramData\Mullvad VPN\cache` |
+
+## Tray Icon (Linux)
+
+The tray icon may require additional setup on some Linux desktop environments:
+
+### GNOME
+
+Install the AppIndicator extension:
+
+1. Visit [GNOME Extensions](https://extensions.gnome.org/extension/615/appindicator-support/)
+2. Install "AppIndicator and KStatusNotifierItem Support"
+
+### Other Desktop Environments
+
+Install one of these packages:
+
+- `libappindicator3-1`
+- `libappindicator1`
+- `libappindicator`
+
+## Environment Variables
+
+The daemon supports several environment variables for advanced configuration:
+
+### Common Variables
+
+- `TALPID_FORCE_USERSPACE_WIREGUARD`: Force userspace WireGuard implementation
+- `TALPID_DISABLE_OFFLINE_MONITOR`: Always assume host is online
+- `MULLVAD_MANAGEMENT_SOCKET_GROUP`: (Linux/macOS) Restrict management interface access to specific group
+
+### Setting Environment Variables
+
+#### Windows
+
+```cmd
+setx TALPID_DISABLE_OFFLINE_MONITOR 1 /m
+sc.exe stop mullvadvpn
+sc.exe start mullvadvpn
+```
+
+#### Linux
+
+```bash
+sudo systemctl edit mullvad-daemon.service
+# Add:
+# [Service]
+# Environment="TALPID_DISABLE_OFFLINE_MONITOR=1"
+
+sudo systemctl restart mullvad-daemon
+```
+
+#### macOS
+
+```bash
+sudo plutil -replace EnvironmentVariables -json '{"TALPID_DISABLE_OFFLINE_MONITOR": "1"}' \
+  /Library/LaunchDaemons/net.mullvad.daemon.plist
+launchctl unload -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+launchctl load -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+```
+
+For complete list, see the [main README](https://github.com/mullvad/mullvadvpn-app#environment-variables-used-by-the-service).
+
+## Troubleshooting
+
+### Connection Issues
+
+1. Check daemon status using system service commands
+2. Review logs in the log directory for your platform
+3. Try connecting via CLI: `mullvad connect`
+4. Check firewall rules aren't conflicting
+
+### Firewall Issues
+
+If experiencing network issues:
+
+- **Windows**: Ensure WFP isn't blocked by other security software
+- **macOS**: Check PF isn't disabled or conflicting with other rules
+- **Linux**: Verify nftables is installed and no conflicting iptables rules exist
+
+### GUI Not Connecting
+
+If GUI cannot connect to daemon:
+
+1. Ensure daemon service is running
+2. Check management interface socket/pipe permissions
+3. Verify no other security software is blocking communication
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Reference" icon="terminal" href="/platforms/cli">
+    Learn to use the command-line interface
+  </Card>
+  <Card title="Security Architecture" icon="shield" href="/architecture/security">
+    Understand the security model
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/essentials/troubleshooting">
+    Common issues and solutions
+  </Card>
+  <Card title="Settings" icon="gear" href="/essentials/settings">
+    Configure advanced settings
+  </Card>
+</CardGroup>

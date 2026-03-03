@@ -1,0 +1,363 @@
+---
+title: Account Management
+description: Create, login, logout, and manage your Mullvad VPN account
+---
+
+Mullvad VPN uses a unique account system based on randomly generated account numbers. This guide covers account creation, authentication, and voucher redemption.
+
+## Account Overview
+
+Mullvad accounts are identified by a unique account number rather than email addresses or usernames. This privacy-focused approach means:
+
+- No personal information is required
+- Account numbers are randomly generated
+- You're responsible for saving your account number securely
+- Account time is purchased in advance (prepaid model)
+
+## Creating a New Account
+
+You can create a new Mullvad account directly from the CLI, which automatically logs you in.
+
+<Steps>
+  <Step title="Create Account">
+    Use the `account create` command to generate a new account:
+
+    ```bash
+    mullvad account create
+    ```
+
+    This command:
+    - Generates a new random account number via `CreateNewAccount` RPC
+    - Automatically logs you into the new account
+    - Creates a device entry for your current machine
+    - Displays your account information
+  </Step>
+
+  <Step title="Save Your Account Number">
+    After creation, you'll see output like:
+
+    ```
+    New account created!
+    Mullvad account:    1234567890123456
+    Expires at:         2026-03-03 19:00:00 -05:00
+    Device name:        Happy Seagull
+    ```
+
+    **Important:** Save this account number securely. You'll need it to log in on other devices.
+  </Step>
+
+  <Step title="Add VPN Time">
+    New accounts come with limited trial time. Add more time using:
+    - Vouchers (see [Voucher Redemption](#voucher-redemption))
+    - Payment on the Mullvad website
+  </Step>
+</Steps>
+
+## Logging In
+
+Log into an existing Mullvad account on your device.
+
+<Steps>
+  <Step title="Interactive Login">
+    Run the login command without an account number to be prompted:
+
+    ```bash
+    mullvad account login
+    ```
+
+    You'll be prompted:
+    ```
+    Enter an account number:
+    ```
+
+    Type or paste your 16-digit account number.
+  </Step>
+
+  <Step title="Direct Login">
+    Alternatively, provide the account number directly:
+
+    ```bash
+    mullvad account login 1234567890123456
+    ```
+
+    On success:
+    ```
+    Mullvad account "1234567890123456" set
+    ```
+  </Step>
+</Steps>
+
+### What Happens During Login
+
+The `LoginAccount` RPC performs several operations:
+
+1. **Validates** the account number with Mullvad's API
+2. **Creates or retrieves** a device entry for your machine
+3. **Generates** a WireGuard keypair for secure connections
+4. **Registers** the device with your account
+5. **Stores** authentication credentials locally
+
+<Note>
+Each device is assigned a random name (e.g., "Happy Seagull", "Brave Dolphin") for easy identification. See [Device Management](/account/device-management) for details.
+</Note>
+
+## Viewing Account Information
+
+Check your current account status and details.
+
+### Basic Information
+
+```bash
+mullvad account get
+```
+
+Displays:
+```
+Mullvad account:    1234567890123456
+Expires at:         2026-04-15 10:30:00 -05:00
+Device name:        Happy Seagull
+```
+
+### Verbose Output
+
+Get detailed account and device information:
+
+```bash
+mullvad account get -v
+```
+
+Includes additional fields:
+```
+Mullvad account:    1234567890123456
+Expires at:         2026-04-15 10:30:00 -05:00
+Account id:         a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Device name:        Happy Seagull
+Device id:          abc123def456
+Device pubkey:      wg-pubkey-base64-string-here
+Device created:     2026-03-01 14:20:00 UTC
+```
+
+<Info>
+The `GetAccountData` RPC retrieves account expiration time from the API. The daemon calls `UpdateDevice` internally to ensure device information is current.
+</Info>
+
+## Account States
+
+Your account can be in one of three states:
+
+### Logged In
+
+You're authenticated with a valid account number and active device. The `DeviceState` is `LOGGED_IN`.
+
+```bash
+mullvad account get
+```
+```
+Mullvad account:    1234567890123456
+Expires at:         2026-04-15 10:30:00 -05:00
+Device name:        Happy Seagull
+```
+
+### Logged Out
+
+No account is configured on this device. The `DeviceState` is `LOGGED_OUT`.
+
+```bash
+mullvad account get
+```
+```
+Not logged in on any account
+```
+
+### Revoked
+
+Your device was removed from the account (manually or due to device limits). The `DeviceState` is `REVOKED`.
+
+```bash
+mullvad account get
+```
+```
+The current device has been revoked
+Mullvad account: 1234567890123456
+```
+
+<Warning>
+If your device is revoked, you'll need to log in again. This will create a new device entry (counting toward your device limit).
+</Warning>
+
+## Logging Out
+
+Remove your account from the current device and delete its device entry.
+
+```bash
+mullvad account logout
+```
+
+Output:
+```
+Removed device from Mullvad account
+```
+
+### What Happens During Logout
+
+The `LogoutAccount` RPC:
+
+1. **Removes** the device entry from your account on the API
+2. **Deletes** the WireGuard keys for this device
+3. **Clears** stored account credentials locally
+4. **Frees up** a device slot for your account
+
+<Tip>
+Always log out when you're done using Mullvad on a device you no longer need. This prevents hitting the device limit and ensures old devices can't reconnect.
+</Tip>
+
+## Voucher Redemption
+
+Vouchers add VPN time to your account. Purchase vouchers from authorized resellers or use promotional codes.
+
+<Steps>
+  <Step title="Obtain a Voucher">
+    Vouchers are alphanumeric codes (e.g., `ABCD-1234-EFGH-5678`) that can be purchased from:
+    - Mullvad's website
+    - Authorized resellers
+    - Promotional campaigns
+  </Step>
+
+  <Step title="Redeem the Voucher">
+    Use the `account redeem` command:
+
+    ```bash
+    mullvad account redeem ABCD-1234-EFGH-5678
+    ```
+
+    The command automatically strips hyphens and non-alphanumeric characters, so these formats all work:
+    ```bash
+    mullvad account redeem ABCD-1234-EFGH-5678
+    mullvad account redeem ABCD1234EFGH5678
+    mullvad account redeem "abcd 1234 efgh 5678"
+    ```
+  </Step>
+
+  <Step title="Confirm Time Added">
+    On success, you'll see:
+
+    ```
+    Added 30 days to the account
+    New expiry date: 2026-05-15 10:30:00 -05:00
+    ```
+
+    The `SubmitVoucher` RPC returns:
+    - `seconds_added`: Duration added to your account (in seconds)
+    - `new_expiry`: Your updated account expiration date
+  </Step>
+</Steps>
+
+### Voucher Validation
+
+The daemon validates vouchers through the API. Common errors:
+
+- **Invalid voucher**: Code doesn't exist or was mistyped
+- **Already used**: Voucher has been redeemed on another account
+- **Expired**: Voucher is past its expiration date
+
+## Account History
+
+The daemon maintains a local history of accounts you've logged into on this device.
+
+### View Account History
+
+The `GetAccountHistory` RPC retrieves the most recent account number:
+
+```bash
+# Shown automatically when device is revoked
+mullvad account get
+```
+```
+The current device has been revoked
+Mullvad account: 1234567890123456
+```
+
+### Clear Account History
+
+Remove stored account history from local settings:
+
+```bash
+# Via management interface
+# ClearAccountHistory RPC removes historical account data
+```
+
+<Note>
+Account history is stored locally only. Clearing it doesn't affect your account on Mullvad's servers.
+</Note>
+
+## Web Authentication Tokens
+
+Get a temporary token to authenticate with Mullvad's web interface.
+
+### Generate Auth Token
+
+The `GetWwwAuthToken` RPC generates a short-lived token:
+
+```bash
+# Token retrieved via management interface for web authentication
+# Allows accessing account settings on Mullvad's website without password
+```
+
+This token provides temporary access to your account on the Mullvad website, useful for:
+- Viewing detailed account information
+- Managing payment methods  
+- Reviewing connection history
+- Downloading invoices
+
+<Warning>
+Web auth tokens expire quickly. Don't share them as they provide full access to your account.
+</Warning>
+
+## Related Topics
+
+- [Device Management](/account/device-management) - Managing devices and device limits
+- [Authentication](/account/authentication) - WireGuard key rotation and security
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `mullvad account create` | Create and log into a new account |
+| `mullvad account login [ACCOUNT]` | Log into an existing account |
+| `mullvad account logout` | Log out and remove device from account |
+| `mullvad account get` | Display current account information |
+| `mullvad account get -v` | Display verbose account and device details |
+| `mullvad account redeem <VOUCHER>` | Redeem a voucher code |
+
+## gRPC Service Reference
+
+The management interface provides these account-related RPCs:
+
+| RPC | Request | Response | Description |
+|-----|---------|----------|-------------|
+| `CreateNewAccount` | Empty | StringValue | Generate new account and return number |
+| `LoginAccount` | StringValue (account) | Empty | Authenticate with account number |
+| `LogoutAccount` | StringValue (reason) | Empty | Remove device from account |
+| `GetAccountData` | StringValue (account) | AccountData | Retrieve account expiration and ID |
+| `GetAccountHistory` | Empty | AccountHistory | Get most recent account number |
+| `ClearAccountHistory` | Empty | Empty | Clear stored account history |
+| `GetWwwAuthToken` | Empty | StringValue | Generate web authentication token |
+| `SubmitVoucher` | StringValue (voucher) | VoucherSubmission | Redeem voucher code |
+
+### AccountData Message
+
+```protobuf
+message AccountData {
+  string id = 1;                          // Account UUID
+  google.protobuf.Timestamp expiry = 2;   // Expiration timestamp
+}
+```
+
+### VoucherSubmission Message
+
+```protobuf
+message VoucherSubmission {
+  uint64 seconds_added = 1;               // Time added in seconds
+  google.protobuf.Timestamp new_expiry = 2; // New expiration date
+}
+```

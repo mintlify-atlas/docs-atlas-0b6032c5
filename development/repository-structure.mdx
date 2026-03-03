@@ -1,0 +1,277 @@
+---
+title: Repository Structure
+description: Understanding the organization of the Mullvad VPN codebase
+---
+
+## Overview
+
+The Mullvad VPN repository contains all source code for desktop and mobile versions of the app, including the system daemon, graphical and command-line interfaces, and platform-specific implementations.
+
+## Top-Level Structure
+
+### Application Components
+
+- **mullvad-daemon/** - Main Rust crate building the daemon binary
+- **mullvad-cli/** - Terminal-based CLI frontend for controlling the daemon
+- **desktop/** - Electron + React GUI application
+- **android/** - Android app with dedicated frontend
+- **ios/** - Standalone iOS implementation
+
+### Build and Distribution
+
+- **build.sh** - Main build script that performs sanity checks and builds installers
+- **build-windows-modules.sh** - Compiles C++ libraries required on Windows
+- **dist-assets/** - Icons, binaries, and files for creating distributables
+  - **binaries/** - Git submodule with third-party binaries (Wintun, etc.)
+  - **linux/** - Scripts and configuration for deb/rpm packages
+  - **pkg-scripts/** - Scripts for macOS pkg installer
+  - **windows/** - NSIS installer configuration and assets
+
+### Submodules
+
+- **dist-assets/binaries/** - Git submodule containing third-party binaries and build scripts
+- **wireguard-go-rs/libwg/wireguard-go** - WireGuard Go implementation (required for Android, Windows, Linux, macOS)
+
+All merge commits in the binaries submodule must be signed. See [wireguard-go-rs README](https://github.com/mullvad/mullvadvpn-app/tree/main/wireguard-go-rs) for details.
+
+## Cargo Workspace
+
+The repository uses a Cargo workspace structure defined in the root `Cargo.toml`.
+
+### Workspace Members
+
+The workspace includes 47 crates organized into two main categories:
+
+#### Mullvad-Specific Crates
+
+Crates prefixed with `mullvad-` contain Mullvad-specific functionality:
+
+- **mullvad-daemon** - Main daemon binary
+- **mullvad-cli** - CLI application
+- **mullvad-api** - API client for Mullvad services
+- **mullvad-management-interface** - gRPC management interface
+- **mullvad-relay-selector** - VPN relay selection logic
+- **mullvad-types** - Shared type definitions
+- **mullvad-paths** - Platform-specific path handling
+- **mullvad-logging** - Logging configuration
+- **mullvad-fs** - File system utilities
+- **mullvad-problem-report** - Problem report generation
+- **mullvad-version** - Version information
+- **mullvad-encrypted-dns-proxy** - DNS proxy functionality
+- **mullvad-masque-proxy** - MASQUE protocol proxy
+- **mullvad-exclude** - Process exclusion utilities
+- **mullvad-leak-checker** - VPN leak detection
+
+#### Platform-Specific Mullvad Crates
+
+- **mullvad-jni** - Android JNI bindings
+- **mullvad-ios** - iOS-specific code
+- **mullvad-nsis** - Windows NSIS installer
+- **mullvad-setup** - Installation and setup
+- **mullvad-update** - Auto-update functionality
+
+#### Talpid Crates
+
+Crates prefixed with `talpid-` provide generic VPN client functionality **independent of Mullvad specifics**:
+
+- **talpid-core** - Main VPN client implementation (Mullvad-agnostic)
+- **talpid-tunnel** - Tunnel management
+- **talpid-wireguard** - WireGuard integration
+- **talpid-routing** - Routing table management
+- **talpid-dns** - DNS configuration
+- **talpid-net** - Network utilities
+- **talpid-future** - Async utilities
+- **talpid-time** - Time-related utilities
+- **talpid-tunnel-config-client** - Tunnel configuration
+
+#### Platform-Specific Talpid Crates
+
+- **talpid-platform-metadata** - Platform detection
+- **talpid-dbus** - D-Bus integration (Linux)
+- **talpid-macos** - macOS-specific functionality
+- **talpid-windows** - Windows-specific functionality
+
+#### Other Crates
+
+- **wireguard-go-rs** - Rust bindings for wireguard-go
+- **tunnel-obfuscation** - Traffic obfuscation
+- **windows-installer** - Windows installer tools
+- **installer-downloader** - Installer download utilities
+- **android/translations-converter** - Translation file converter
+- **desktop/packages/nseventforwarder** - macOS event forwarding
+- **desktop/packages/windows-utils** - Windows utility functions
+
+### Default Members
+
+Running `cargo build` in the root directory only builds:
+- mullvad-cli
+- mullvad-daemon
+- mullvad-problem-report
+- mullvad-version
+
+To build all crates, use `cargo build --workspace`.
+
+### Workspace Configuration
+
+- **Edition:** Rust 2024
+- **Minimum Rust version:** 1.91.0
+- **License:** GPL-3.0-or-later
+- **Resolver:** Version 2
+
+## Design Philosophy: Mullvad vs Talpid
+
+### Talpid: Generic VPN Client
+
+Talpid crates implement a **generic, privacy-focused VPN client** with no knowledge of:
+- Mullvad API endpoints
+- Mullvad account management
+- Mullvad relay lists
+- Mullvad-specific business logic
+
+Talpid provides:
+- Secure tunnel establishment
+- Firewall management
+- DNS leak protection
+- Kill switch functionality
+- Split tunneling
+- Generic VPN client operations
+
+### Mullvad: Service Integration
+
+Mullvad crates build on Talpid to create the **Mullvad-specific VPN client**:
+- API communication with Mullvad servers
+- Account authentication and validation
+- Relay server selection
+- Mullvad-specific features (multihop, DAITA, etc.)
+- App settings and preferences
+
+This separation ensures the core VPN functionality remains reusable and independently testable.
+
+## Desktop Application Structure
+
+### Electron App (desktop/packages/mullvad-vpn/)
+
+```
+desktop/packages/mullvad-vpn/
+├── assets/              # Graphics and stylesheets
+├── src/
+│   ├── main/
+│   │   └── index.ts     # Main process entry point
+│   └── renderer/
+│       ├── app.tsx      # Renderer process entry
+│       ├── routes.tsx   # Route configuration
+│       └── transitions.ts # View transition rules
+├── tasks/               # Gulp build tasks
+│   └── distribution.js  # electron-builder config
+└── test/                # Electron GUI tests
+```
+
+### Additional Desktop Packages
+
+- **desktop/packages/nseventforwarder** - macOS event forwarding (native)
+- **desktop/packages/windows-utils** - Windows utility functions (native)
+
+## File Paths
+
+### Settings Directory
+
+**Can be overridden with `MULLVAD_SETTINGS_DIR`**
+
+| Platform | Path |
+|----------|------|
+| Linux | `/etc/mullvad-vpn/` |
+| macOS | `/etc/mullvad-vpn/` |
+| Windows | `%LOCALAPPDATA%\Mullvad VPN\` |
+| Android | `getFilesDir()` |
+
+### Log Directory
+
+**Can be overridden with `MULLVAD_LOG_DIR`**
+
+| Platform | Path |
+|----------|------|
+| Linux | `/var/log/mullvad-vpn/` + systemd |
+| macOS | `/var/log/mullvad-vpn/` |
+| Windows | `C:\ProgramData\Mullvad VPN\` |
+| Android | `getFilesDir()` |
+
+### Cache Directory
+
+**Can be overridden with `MULLVAD_CACHE_DIR`**
+
+| Platform | Path |
+|----------|------|
+| Linux | `/var/cache/mullvad-vpn/` |
+| macOS | `/Library/Caches/mullvad-vpn/` |
+| Windows | `C:\ProgramData\Mullvad VPN\cache` |
+| Android | `getCacheDir()` |
+
+### RPC Address File
+
+**Can be overridden with `MULLVAD_RPC_SOCKET_PATH`**
+
+| Platform | Path |
+|----------|------|
+| Linux | `/var/run/mullvad-vpn` |
+| macOS | `/var/run/mullvad-vpn` |
+| Windows | `//./pipe/Mullvad VPN` |
+| Android | `getNoBackupFilesDir()` |
+
+### Desktop GUI Settings
+
+| Platform | Path |
+|----------|------|
+| Linux | `$XDG_CONFIG_HOME/Mullvad VPN/gui_settings.json` |
+| macOS | `~/Library/Application Support/Mullvad VPN/gui_settings.json` |
+| Windows | `%LOCALAPPDATA%\Mullvad VPN\gui_settings.json` |
+
+## Submodules
+
+### Required Submodules
+
+**Basic submodules (first level only):**
+```bash
+git submodule update --init
+```
+
+**WireGuard Go submodule (required for most platforms):**
+```bash
+git submodule update --init wireguard-go-rs/libwg/wireguard-go
+```
+
+**Android Rust plugin:**
+```bash
+git submodule update --init android/rust-android-gradle-plugin
+```
+
+**iOS WireGuard:**
+```bash
+git submodule update --init --recursive ios/wireguard-apple
+```
+
+### Avoiding Recursive Clone
+
+Some submodules have their own large submodules not needed for building. Clone the repository normally, then get only one level of submodules:
+
+```bash
+git clone https://github.com/mullvad/mullvadvpn-app.git
+cd mullvadvpn-app
+git submodule update --init  # Not --init --recursive
+```
+
+## Related Documentation
+
+- [Graphics README](https://github.com/mullvad/mullvadvpn-app/tree/main/graphics) - Icon assets
+- [Locales README](https://github.com/mullvad/mullvadvpn-app/tree/main/desktop/packages/mullvad-vpn/locales) - Translation files
+- [Android README](https://github.com/mullvad/mullvadvpn-app/tree/main/android) - Android-specific info
+- [iOS Translation README](https://github.com/mullvad/mullvadvpn-app/tree/main/ios/translation) - iOS translations
+- [Security Documentation](https://github.com/mullvad/mullvadvpn-app/tree/main/docs/security.md) - Security model
+- [Audits](https://github.com/mullvad/mullvadvpn-app/tree/main/audits) - Security audit reports
+
+## Vocabulary
+
+- **App** - The entire product (everything in the repository)
+- **Daemon** - The `mullvad-daemon` Rust program (headless, management interface)
+- **Frontend** - Any program connecting to the daemon:
+  - **GUI** - Electron + React graphical interface
+  - **CLI** - `mullvad` terminal-based interface

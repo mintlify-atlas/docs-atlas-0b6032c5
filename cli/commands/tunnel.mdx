@@ -1,0 +1,326 @@
+---
+title: "mullvad tunnel"
+description: "Configure VPN tunnel options"
+---
+
+## Overview
+
+The `mullvad tunnel` command manages tunnel configuration including MTU, quantum resistance, DAITA, allowed IPs, key rotation, and IPv6 settings.
+
+## Syntax
+
+```bash
+mullvad tunnel <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display current tunnel configuration:
+
+```bash
+mullvad tunnel get
+```
+
+### set
+
+Configure tunnel options:
+
+```bash
+mullvad tunnel set <OPTION>
+```
+
+## Set Options
+
+### mtu
+
+Configure tunnel MTU (Maximum Transmission Unit):
+
+```bash
+mullvad tunnel set mtu <VALUE>
+```
+
+**Arguments:**
+- `<VALUE>` - MTU value in bytes (e.g., 1380, 1420), or "any" for automatic
+
+### quantum-resistant
+
+Configure quantum-resistant key exchange:
+
+```bash
+mullvad tunnel set quantum-resistant <STATE>
+```
+
+**Values:**
+- `auto` - Automatically select based on Mullvad recommendations
+- `on` - Always use quantum-resistant tunnels
+- `off` - Never use quantum-resistant tunnels
+
+### daita
+
+Enable or disable DAITA (Defense against AI-guided Traffic Analysis):
+
+```bash
+mullvad tunnel set daita <on|off>
+```
+
+### daita-direct-only
+
+Configure whether DAITA should only work on direct connections:
+
+```bash
+mullvad tunnel set daita-direct-only <on|off>
+```
+
+### allowed-ips
+
+Specify custom allowed IPs for WireGuard tunnels:
+
+```bash
+mullvad tunnel set allowed-ips <IP_RANGES>
+```
+
+**Arguments:**
+- `<IP_RANGES>` - Comma-separated IPs and CIDR ranges, or empty string to reset
+
+**Format:**
+- Single IPs: `192.168.1.1`
+- CIDR ranges: `10.0.0.0/24`, `fd00::/8`
+- Multiple: `10.0.0.0/24,192.168.1.1,fd00::/8`
+- Reset: `` (empty string)
+
+**WARNING:** Incorrect configuration may block internet access or break VPN functionality.
+
+### rotation-interval
+
+Set WireGuard key rotation interval:
+
+```bash
+mullvad tunnel set rotation-interval <HOURS>
+```
+
+**Arguments:**
+- `<HOURS>` - Number of hours between key rotations, or "any" for default
+
+### rotate-key
+
+Immediately rotate the WireGuard key:
+
+```bash
+mullvad tunnel set rotate-key
+```
+
+### ipv6
+
+Enable or disable IPv6 in the tunnel:
+
+```bash
+mullvad tunnel set ipv6 <on|off>
+```
+
+## Examples
+
+### View Current Configuration
+
+```bash
+mullvad tunnel get
+```
+
+Output:
+```
+WireGuard options
+        MTU: 1380
+        Quantum resistance: auto
+        DAITA: off
+        Public key: wg-public-key-here
+        Created 2025-03-03 10:30:00 +01:00
+        Rotation interval: 7 days
+        Allowed IPs: all traffic (default)
+Generic options
+        IPv6: on
+```
+
+### Set MTU
+
+Set specific MTU:
+
+```bash
+mullvad tunnel set mtu 1380
+```
+
+Output:
+```
+MTU parameter has been updated
+```
+
+Set automatic MTU:
+
+```bash
+mullvad tunnel set mtu any
+```
+
+### Configure Quantum Resistance
+
+Enable quantum resistance:
+
+```bash
+mullvad tunnel set quantum-resistant on
+```
+
+Output:
+```
+Quantum resistant setting has been updated
+```
+
+Use automatic mode:
+
+```bash
+mullvad tunnel set quantum-resistant auto
+```
+
+### Enable DAITA
+
+```bash
+mullvad tunnel set daita on
+```
+
+Output:
+```
+DAITA setting has been updated
+```
+
+### Configure Allowed IPs
+
+Route only specific networks:
+
+```bash
+mullvad tunnel set allowed-ips "10.0.0.0/8,192.168.0.0/16"
+```
+
+Output:
+```
+WireGuard allowed IPs have been updated
+```
+
+Reset to default (all traffic):
+
+```bash
+mullvad tunnel set allowed-ips ""
+```
+
+### Key Rotation
+
+Set rotation interval to 7 days:
+
+```bash
+mullvad tunnel set rotation-interval 168
+```
+
+Output:
+```
+Set key rotation interval to 7 days
+```
+
+Reset to default interval:
+
+```bash
+mullvad tunnel set rotation-interval any
+```
+
+Output:
+```
+Reset key rotation interval to 7 days
+```
+
+Rotate key immediately:
+
+```bash
+mullvad tunnel set rotate-key
+```
+
+Output:
+```
+Rotated WireGuard key
+```
+
+### IPv6 Configuration
+
+Enable IPv6:
+
+```bash
+mullvad tunnel set ipv6 on
+```
+
+Output:
+```
+IPv6: on
+```
+
+Disable IPv6:
+
+```bash
+mullvad tunnel set ipv6 off
+```
+
+## WireGuard Key Management
+
+The tunnel command displays information about your current WireGuard key:
+
+- **Public key** - Your device's public WireGuard key
+- **Created** - When the key was generated
+- **Rotation interval** - How often the key is automatically rotated
+
+Keys are rotated automatically based on the configured interval, or you can manually rotate them using `rotate-key`.
+
+## Quantum Resistance
+
+Quantum-resistant tunnels use post-quantum cryptography to protect against future quantum computers. The three states are:
+
+- **auto** - Uses quantum resistance when Mullvad recommends it
+- **on** - Always establishes quantum-resistant tunnels
+- **off** - Uses standard WireGuard without post-quantum cryptography
+
+## DAITA (Defense against AI-guided Traffic Analysis)
+
+DAITA provides additional protection against advanced traffic analysis:
+
+- Adds cover traffic to mask patterns
+- Helps defend against AI-powered traffic analysis
+- May slightly increase bandwidth usage
+
+## Allowed IPs
+
+By default, WireGuard routes all traffic (`0.0.0.0/0, ::/0`) through the tunnel. Custom allowed IPs let you:
+
+- Route only specific networks through VPN
+- Implement split tunneling at IP level
+- Exclude certain destinations from VPN
+
+Host bits must be zero in CIDR ranges (e.g., `10.0.0.0/24` valid, `10.0.0.1/24` invalid).
+
+## Related Commands
+
+- [relay](/cli/commands/relay) - Configure relay selection
+- [connect](/cli/commands/connect) - Connect with current tunnel settings
+- [dns](/cli/commands/dns) - Configure DNS servers
+- [split-tunnel](/cli/commands/split-tunnel) - Configure application split tunneling
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Configuration updated successfully |
+| 1 | Invalid configuration or update failed |
+
+## Notes
+
+- MTU affects packet size and can impact performance on some networks
+- Quantum resistance may slightly increase connection overhead
+- Key rotation happens automatically in the background
+- Custom allowed IPs require careful configuration to avoid connectivity issues
+- IPv6 setting affects both tunnel and relay selection
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/tunnel.rs`

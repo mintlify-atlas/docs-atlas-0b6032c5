@@ -1,0 +1,166 @@
+---
+title: 'WireGuard Protocol'
+description: 'Modern, high-performance VPN protocol with state-of-the-art cryptography'
+---
+
+## Overview
+
+Mullvad VPN uses WireGuard as its primary VPN protocol. WireGuard is a modern VPN protocol that offers significant advantages over traditional protocols like OpenVPN and IPSec:
+
+- **High performance**: Minimal overhead and efficient cryptography
+- **Modern cryptography**: Uses Curve25519, ChaCha20, Poly1305, BLAKE2s, and SipHash24/13
+- **Simple codebase**: Easier to audit and maintain (approximately 4,000 lines of code)
+- **Built-in roaming**: Seamlessly handles network changes
+
+## How It Works
+
+WireGuard establishes a secure tunnel using public-key cryptography:
+
+1. **Key Exchange**: Each device has a private key and derives a corresponding public key using x25519 elliptic curve cryptography
+2. **Peer Configuration**: Devices exchange public keys to establish trust
+3. **Encrypted Tunnel**: All traffic is encrypted using ChaCha20-Poly1305 AEAD cipher
+4. **IP Routing**: Allowed IPs determine which traffic goes through the tunnel
+
+<Note>
+WireGuard uses UDP as its transport protocol, which provides better performance than TCP-based VPN protocols. When UDP is blocked, Mullvad offers [obfuscation protocols](/features/obfuscation) to tunnel WireGuard over TCP.
+</Note>
+
+## Key Features
+
+### Cryptographic Primitives
+
+WireGuard uses carefully selected, modern cryptographic algorithms:
+
+- **Curve25519**: For Elliptic-curve Diffie–Hellman (ECDH) key exchange
+- **ChaCha20**: Symmetric encryption cipher
+- **Poly1305**: Message authentication code (MAC)
+- **BLAKE2s**: Cryptographic hash function
+- **SipHash24/13**: Hash function for hashtable keys
+
+### Performance Benefits
+
+- Lower CPU usage compared to OpenVPN
+- Faster connection establishment
+- Better battery life on mobile devices
+- Efficient handling of roaming between networks
+
+### Connection Persistence
+
+WireGuard maintains connections even when your device:
+- Switches between WiFi and mobile data
+- Changes IP addresses
+- Wakes from sleep mode
+
+## Implementation Details
+
+### Kernel vs Userspace
+
+Mullvad supports both implementations:
+
+<Tabs>
+  <Tab title="Kernel Module">
+    - Default on Linux, Windows (wireguard-nt), and macOS
+    - Highest performance
+    - Runs in kernel space for minimal overhead
+    - Available when kernel module is present
+  </Tab>
+  
+  <Tab title="Userspace (wireguard-go)">
+    - Fallback implementation
+    - Cross-platform Go-based implementation
+    - Used when kernel module is unavailable
+    - Can be forced via `TALPID_FORCE_USERSPACE_WIREGUARD` environment variable
+  </Tab>
+</Tabs>
+
+<Info>
+On Android and iOS, the userspace implementation is used by default as kernel modules cannot be loaded on these platforms.
+</Info>
+
+## Configuring WireGuard
+
+### Using the GUI
+
+1. Open Mullvad VPN
+2. Go to **Settings** → **VPN settings**
+3. WireGuard is selected by default under **Tunnel protocol**
+4. Configure additional options:
+   - MTU (Maximum Transmission Unit)
+   - Port selection (automatic or specific ports)
+
+### Using the CLI
+
+WireGuard is the default protocol. To explicitly configure settings:
+
+```bash
+# Check current tunnel settings
+mullvad relay set tunnel-protocol wireguard
+
+# Set specific WireGuard port
+mullvad relay set tunnel wireguard port 51820
+
+# Use any available port
+mullvad relay set tunnel wireguard port any
+```
+
+## Platform Support
+
+WireGuard is available on all platforms:
+
+| Platform | Implementation | Notes |
+|----------|----------------|-------|
+| Windows | wireguard-nt (kernel) | Native Windows driver |
+| Linux | Kernel module | Built into Linux kernel 5.6+ |
+| macOS | Kernel extension | Custom kernel extension |
+| Android | wireguard-go (userspace) | Go implementation |
+| iOS | wireguard-go (userspace) | Go implementation |
+
+## Security Considerations
+
+### Key Rotation
+
+Mullvad automatically rotates WireGuard keys:
+- Keys are ephemeral and rotated regularly
+- Old keys are securely deleted
+- No manual key management required
+
+### Perfect Forward Secrecy
+
+While WireGuard itself doesn't provide perfect forward secrecy in the traditional sense, Mullvad's implementation includes:
+- Regular key rotation
+- [Quantum-resistant tunnels](/features/quantum-resistant) with ephemeral pre-shared keys
+- Session-based security
+
+<Warning>
+WireGuard assigns static tunnel IPs to each key pair. Mullvad handles key rotation to prevent long-term tracking of your tunnel IP address.
+</Warning>
+
+## Troubleshooting
+
+### Connection Issues
+
+If WireGuard connections fail:
+
+1. **Check UDP connectivity**: WireGuard requires UDP to be allowed
+2. **Try different ports**: Some networks block specific ports
+3. **Enable obfuscation**: If UDP is blocked, use [WireGuard over TCP](/features/obfuscation)
+4. **Check firewall rules**: Ensure your firewall allows WireGuard traffic
+
+### Performance Optimization
+
+- **MTU tuning**: Adjust MTU if experiencing fragmentation issues
+- **Port selection**: Some ISPs prioritize certain ports
+- **Server selection**: Choose geographically closer servers
+
+## Technical Resources
+
+- [WireGuard Official Website](https://www.wireguard.com/)
+- [WireGuard Protocol Specification](https://www.wireguard.com/papers/wireguard.pdf)
+- [Mullvad's WireGuard Implementation (talpid-wireguard)](https://github.com/mullvad/mullvadvpn-app/tree/main/talpid-wireguard)
+
+## Related Features
+
+- [Quantum-Resistant Tunnels](/features/quantum-resistant) - Add post-quantum cryptography
+- [DAITA](/features/daita) - Traffic analysis protection
+- [Multihop](/features/multihop) - Route through multiple servers
+- [Obfuscation](/features/obfuscation) - Bypass VPN blocking

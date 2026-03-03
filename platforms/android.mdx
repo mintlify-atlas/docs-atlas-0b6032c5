@@ -1,0 +1,353 @@
+---
+title: Android Application
+description: Complete guide to using Mullvad VPN on Android devices
+---
+
+Mullvad VPN for Android provides privacy-focused VPN protection using native Android APIs. The app is available on multiple platforms and integrates seamlessly with Android's VPN Service API.
+
+## System Requirements
+
+- **Minimum Version**: Android 8 (API level 26) or newer
+- **Architecture**: ARM and x86 (32-bit and 64-bit)
+- **Permissions**: VPN permission required for tunnel creation
+
+## Download and Installation
+
+The Android app is available from multiple sources:
+
+<CardGroup cols={2}>
+  <Card title="Google Play" icon="google" href="https://play.google.com/store/apps/details?id=net.mullvad.mullvadvpn">
+    Install from Google Play Store
+  </Card>
+  <Card title="F-Droid" icon="download" href="https://f-droid.org/packages/net.mullvad.mullvadvpn/">
+    Open-source app repository
+  </Card>
+  <Card title="Mullvad Website" icon="globe" href="https://mullvad.net/download/android/">
+    Direct APK download
+  </Card>
+  <Card title="GitHub Releases" icon="github" href="https://github.com/mullvad/mullvadvpn-app/releases">
+    Official GitHub releases
+  </Card>
+</CardGroup>
+
+<Warning>
+  When installing from sources other than Google Play, you may need to enable "Install from unknown sources" in Android settings.
+</Warning>
+
+## Architecture
+
+The Android app has a unique architecture adapted to Android's security model:
+
+### VPN Service API
+
+Unlike desktop platforms, Android apps cannot directly access the firewall. Instead, the app uses Android's VPN Service API:
+
+- **All Traffic Routing**: Sets routes `0/0` and `::0/0` to route all traffic through the app
+- **Leak Protection**: The routing configuration prevents traffic from bypassing the VPN
+- **System Integration**: Works with Android's native VPN management
+- **Per-App VPN**: Android system can designate which apps use the VPN
+
+### System Service
+
+The app bundles the same `mullvad-daemon` used on desktop:
+
+- **Shared Codebase**: Core VPN logic is identical to desktop versions
+- **Native Library**: Daemon runs as a native library within the app
+- **WireGuard**: Uses the same WireGuard implementation as desktop
+- **API Integration**: Communicates with Mullvad API for server lists and account management
+
+### UI Layer
+
+Native Android UI built with Kotlin:
+
+- **Material Design**: Follows Android design guidelines
+- **Jetpack Compose**: Modern Android UI framework
+- **Permissions**: Handles VPN permission requests
+- **Notifications**: Connection status in notification area
+
+## Security Features
+
+### VPN Service API Leak Protection
+
+The app uses the VPN Service API to ensure all traffic goes through the VPN:
+
+```
+Routes configured: 0.0.0.0/0 and ::/0
+Exclusions: None (by default)
+DNS: Configured to VPN server or custom DNS
+```
+
+<Info>
+  The VPN Service API is the only mechanism available to Android apps for routing network traffic. Direct firewall manipulation is not possible without root access.
+</Info>
+
+### Block Connections Without VPN
+
+Android includes a system-level setting that enhances security:
+
+**Location**: Settings → Network & Internet → VPN → Mullvad VPN → ⚙️ → Block connections without VPN
+
+**Effect**: 
+- Prevents all traffic when VPN is not active
+- Works at the OS level, independent of the app
+- Recommended for maximum security
+
+<Warning>
+  Some system traffic is exempt from this blocking (see [Exempt Traffic](#exempt-traffic)).
+</Warning>
+
+### Kill Switch
+
+The app includes an always-on kill switch:
+
+- **Implementation**: Via VPN Service API routing
+- **States**: Active during connecting, disconnecting, and error states
+- **Cannot be Disabled**: Security is always enforced
+
+### Exempt Traffic
+
+Some Android system traffic bypasses the VPN even with "Block connections without VPN" enabled:
+
+- **Connectivity Checks**: DNS lookups and HTTP(S) connections to verify internet access
+- **Network Time**: NTP traffic for clock synchronization
+- **Hotspot Traffic**: Traffic to/from hotspot clients
+
+<Note>
+  These exemptions are implemented by Android itself and affect all VPN apps. Mullvad has reported these issues to Google: [Issue 249990229](https://issuetracker.google.com/issues/249990229) and [Issue 250529027](https://issuetracker.google.com/issues/250529027).
+</Note>
+
+### DNS Leak Protection
+
+DNS queries are protected:
+
+- **Default**: DNS queries go to VPN server via tunnel
+- **Custom DNS**: Can configure custom DNS servers (queries still through tunnel)
+- **Content Blocking**: Optional blocking of ads, trackers, and malware at DNS level
+
+## Features
+
+### Full WireGuard Support
+
+- **WireGuard Protocol**: Modern, fast VPN protocol
+- **Multihop**: Route through two VPN servers for enhanced privacy
+- **Quantum-Resistant**: Post-quantum cryptography support
+- **Obfuscation**: 
+  - WireGuard over TCP
+  - WireGuard over Shadowsocks
+  - WireGuard over QUIC
+  - Lightweight WireGuard Obfuscation (LWO)
+- **DAITA**: Defense Against AI-Guided Traffic Analysis
+
+### Split Tunneling
+
+Allow specific apps to bypass the VPN:
+
+**Configuration**: 
+1. Open Mullvad VPN app
+2. Navigate to Settings → Split Tunneling
+3. Select apps to exclude from VPN tunnel
+
+**Use Cases**:
+- Banking apps that block VPN connections
+- Local network services
+- Apps requiring your real IP address
+- Reducing battery usage for non-sensitive apps
+
+<Warning>
+  Apps excluded from the tunnel will expose your real IP address and location.
+</Warning>
+
+### Local Network Sharing
+
+Access devices on your local network:
+
+**Setting**: Enable "Local network sharing" in app settings
+
+**When Enabled**:
+- Access to local IP ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+- Connect to printers, file shares, and smart home devices
+- Multicast and broadcast traffic on local network
+
+### Always-On VPN
+
+Android system feature for automatic VPN:
+
+**Configuration**: Settings → Network & Internet → VPN → Mullvad VPN → ⚙️ → Always-on VPN
+
+**Benefits**:
+- Automatically connects on device boot
+- Reconnects automatically after network changes
+- Works with "Block connections without VPN" for maximum security
+
+### Auto-Connect
+
+App-level auto-connect setting:
+
+**Setting**: Enable in Mullvad VPN app settings
+
+**Behavior**:
+- Connects automatically when app starts
+- Works with Android's Always-on VPN
+- Configurable connection preferences
+
+## User Interface
+
+### Main Screen
+
+The main screen shows:
+
+- **Connection Status**: Secure/Unsecured/Connecting
+- **Server Location**: Currently selected or connected server
+- **IP Address**: Your current public IP (when connected, shows VPN server IP)
+- **Connection Time**: Duration of current connection
+- **Connect/Disconnect Button**: Large, easy to tap
+
+### Server Selection
+
+Choose your VPN server:
+
+- **Countries**: Browse servers by country
+- **Cities**: Select specific cities within countries
+- **Custom Lists**: Create lists of favorite servers
+- **Filters**: Filter by ownership (Mullvad-owned vs rented)
+
+### Settings
+
+Accessible from the hamburger menu:
+
+- **VPN Settings**: Protocol, port, and obfuscation
+- **DNS Settings**: Custom DNS and content blocking
+- **Split Tunneling**: App exclusions
+- **Advanced**: Multihop, quantum-resistant, DAITA
+- **Account**: Account number, expiry, and logout
+
+## Notifications
+
+The app uses notifications to show status:
+
+- **Persistent Notification**: Shows when VPN is active (required by Android)
+- **Connection Status**: Updates as connection state changes
+- **Tap to Open**: Tapping notification opens the app
+- **Quick Actions**: Some Android versions support quick connect/disconnect
+
+## Battery Optimization
+
+For reliable VPN operation:
+
+1. Disable battery optimization for Mullvad VPN
+2. Navigate to: Settings → Apps → Mullvad VPN → Battery → Unrestricted
+3. This prevents Android from killing the VPN service
+
+<Note>
+  Some manufacturers (Samsung, Huawei, Xiaomi) have aggressive battery management. You may need to whitelist the app in manufacturer-specific battery settings.
+</Note>
+
+## Permissions
+
+The app requires minimal permissions:
+
+- **VPN Permission**: Required for creating VPN tunnel (requested on first connect)
+- **Network Access**: Basic permission for all network apps
+- **Run at Startup**: For auto-connect functionality
+- **Prevent Sleep**: To maintain VPN connection
+
+<Info>
+  Unlike many VPN apps, Mullvad does not request location, storage, or other unnecessary permissions.
+</Info>
+
+## File Locations
+
+App data is stored in Android's private app directory:
+
+- **Settings**: `getFilesDir()` - Not accessible without root
+- **Logs**: `getFilesDir()` - Can be exported via app
+- **Cache**: `getCacheDir()` - Cleared automatically by Android when needed
+
+## Logs and Problem Reports
+
+To submit logs for troubleshooting:
+
+1. Open Mullvad VPN app
+2. Navigate to Settings → Report a problem
+3. Add description of issue
+4. Tap "Send report"
+5. Note the report ID for reference
+
+Logs are sent securely to Mullvad support and automatically deleted after 30 days.
+
+## Known Limitations
+
+### Android System Limitations
+
+1. **Exempt Traffic**: Some system traffic bypasses VPN (see above)
+2. **Manufacturer Customizations**: Device manufacturers may modify Android in ways that affect VPN behavior
+3. **Battery Management**: Aggressive battery optimization can terminate VPN
+4. **VPN API Limitations**: Cannot prevent all possible leaks (e.g., some IPv6 leaks on some devices)
+
+### App Limitations
+
+1. **No Root Access**: Cannot directly manipulate firewall or routing table
+2. **System VPN Slot**: Only one VPN can be active at a time
+3. **Per-App VPN**: If system "always-on VPN" is configured per-app, split tunneling may conflict
+
+## Android Variants
+
+The app is tested on standard Android (AOSP), but variations exist:
+
+- **Samsung One UI**: Generally works well, watch for battery optimization
+- **Xiaomi MIUI**: Often requires aggressive battery optimization disabling
+- **Huawei EMUI**: May require additional battery/permission settings
+- **Google Pixel**: Recommended, closest to stock Android experience
+- **OnePlus OxygenOS**: Generally compatible
+- **Custom ROMs**: Usually compatible, especially LineageOS, GrapheneOS, CalyxOS
+
+<Warning>
+  Heavily modified Android versions may have undocumented VPN API changes. Test thoroughly on non-standard Android versions.
+</Warning>
+
+## Troubleshooting
+
+### Cannot Connect
+
+1. Ensure VPN permission is granted
+2. Check "Always-on VPN" is not set to another VPN
+3. Disable other VPN or firewall apps
+4. Try disabling and re-enabling the VPN permission
+5. Restart device
+
+### Connection Drops
+
+1. Disable battery optimization for Mullvad VPN
+2. Check manufacturer-specific battery settings
+3. Ensure "Always-on VPN" and "Block connections without VPN" are enabled
+4. Try different servers or obfuscation protocols
+
+### App Not Starting at Boot
+
+1. Enable "Always-on VPN" in Android system settings
+2. Ensure app is not restricted from running at startup
+3. Check manufacturer-specific autostart settings
+
+### Split Tunneling Not Working
+
+1. Ensure apps are properly selected in split tunneling settings
+2. Force stop the app and reconnect
+3. Some apps (like system apps) may not be split-tunnable
+4. Check if "Always-on VPN" is configured per-app (conflicts with split tunneling)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Account Management" icon="user" href="/account/overview">
+    Manage your Mullvad account
+  </Card>
+  <Card title="Security Details" icon="shield" href="/architecture/security">
+    Understand Android VPN security
+  </Card>
+  <Card title="Server Selection" icon="server" href="/essentials/servers">
+    Choose the best server
+  </Card>
+  <Card title="Settings Guide" icon="gear" href="/essentials/settings">
+    Configure advanced settings
+  </Card>
+</CardGroup>

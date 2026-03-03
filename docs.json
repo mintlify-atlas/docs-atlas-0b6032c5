@@ -1,122 +1,194 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Mullvad VPN",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#294d73",
+    "light": "#5c7fa3",
+    "dark": "#1a3449"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/mullvad/mullvadvpn-app"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/mullvad/mullvadvpn-app"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Features",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "features/wireguard",
+              "features/quantum-resistant",
+              "features/daita",
+              "features/multihop",
+              "features/obfuscation",
+              "features/split-tunneling",
+              "features/custom-dns",
+              "features/content-blockers",
+              "features/local-network-access"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Platform Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "platforms/overview",
+              "platforms/desktop",
+              "platforms/android",
+              "platforms/ios",
+              "platforms/cli"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Security & Privacy",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "security/overview",
+              "security/leak-protection",
+              "security/firewall",
+              "security/kill-switch",
+              "security/tunnel-states",
+              "security/audits"
+            ]
+          },
+          {
+            "group": "Account & Devices",
+            "pages": [
+              "account/management",
+              "account/device-management",
+              "account/authentication"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Architecture",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "architecture/overview",
+              "architecture/daemon",
+              "architecture/frontends",
+              "architecture/tunnel-state-machine"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Components",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "architecture/components/mullvad-vs-talpid",
+              "architecture/components/management-interface",
+              "architecture/components/relay-selector",
+              "architecture/components/api-communication",
+              "architecture/components/offline-detection"
+            ]
+          },
+          {
+            "group": "Connection",
+            "pages": [
+              "architecture/connection/wireguard",
+              "architecture/connection/quantum-resistant",
+              "architecture/connection/obfuscation-protocols"
+            ]
+          },
+          {
+            "group": "System Integration",
+            "pages": [
+              "architecture/system/firewall-integration",
+              "architecture/system/dns-management",
+              "architecture/system/routing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "cli/overview",
+              "cli/installation"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/commands/connect",
+              "cli/commands/disconnect",
+              "cli/commands/status",
+              "cli/commands/account",
+              "cli/commands/relay",
+              "cli/commands/tunnel",
+              "cli/commands/dns",
+              "cli/commands/split-tunnel",
+              "cli/commands/lockdown",
+              "cli/commands/auto-connect",
+              "cli/commands/lan",
+              "cli/commands/custom-list"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "cli/configuration/settings",
+              "cli/configuration/environment-variables",
+              "cli/configuration/file-paths"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "development/building",
+              "development/repository-structure",
+              "development/development-environment"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "development/contributing",
+              "development/code-signing",
+              "development/security-practices"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "development/testing-overview",
+              "development/platform-specific-testing"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "development/release-process",
+              "development/troubleshooting",
+              "development/known-issues"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

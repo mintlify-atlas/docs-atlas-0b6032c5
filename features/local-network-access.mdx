@@ -1,0 +1,511 @@
+---
+title: 'Local Network Access'
+description: 'Control access to devices on your local network while connected to the VPN'
+---
+
+## Overview
+
+Local network access (also called "Allow LAN" or "Local network sharing") controls whether your device can communicate with other devices on your local network while connected to Mullvad VPN.
+
+When **enabled**:
+- Access printers, NAS, file shares, media servers
+- Connect to local services (home assistant, routers, IoT devices)
+- Participate in local multiplayer games
+- Use Chromecast, AirPlay, and local streaming
+
+When **disabled** (default):
+- Maximum security and privacy
+- No local network communication
+- Protection against local network attacks
+
+<Note>
+Local network access is available on all platforms: Windows, Linux, macOS, Android, and iOS. On iOS, the local network is **always accessible** due to platform limitations.
+</Note>
+
+## How It Works
+
+### Without VPN (Normal Network Access)
+
+```
+[Your Device] ←─────────────────────► [Local Devices]
+       │                              Printer, NAS, etc.
+       ▼
+    Internet
+```
+
+### VPN Connected with Local Network Access Disabled (Default)
+
+```
+[Your Device] ────X──── [Local Devices]  ← BLOCKED
+       │
+       ▼
+  [VPN Tunnel] ────► Internet
+```
+
+Firewall blocks local network traffic for maximum security.
+
+### VPN Connected with Local Network Access Enabled
+
+```
+[Your Device] ←─────────────────────► [Local Devices]  ← ALLOWED
+       │                              Printer, NAS, etc.
+       ▼
+  [VPN Tunnel] ────► Internet
+```
+
+Firewall allows traffic to private IP ranges.
+
+## Private IP Address Ranges
+
+When local network access is enabled, Mullvad allows traffic to these private (non-routable) IP ranges:
+
+### IPv4 Private Ranges
+
+| Range | Description | Common Use |
+|-------|-------------|------------|
+| `10.0.0.0/8` | Class A private | Large networks, VPNs |
+| `172.16.0.0/12` | Class B private | Medium networks |
+| `192.168.0.0/16` | Class C private | Home networks |
+| `169.254.0.0/16` | Link-local | Auto-configuration (APIPA) |
+
+### IPv6 Private Ranges
+
+| Range | Description |
+|-------|-------------|
+| `fe80::/10` | Link-local addresses |
+| `fc00::/7` | Unique local addresses (ULA) |
+
+### Multicast Ranges (Outgoing Only)
+
+When local network access is enabled, outgoing traffic to local multicast is allowed:
+
+**IPv4 Multicast**:
+- `224.0.0.0/24` - Local subnet multicast
+- `239.0.0.0/8` - Administratively scoped multicast (mDNS, SSDP)
+- `255.255.255.255/32` - Broadcast
+
+**IPv6 Multicast**:
+- `ff01::/16` - Interface-local multicast
+- `ff02::/16` - Link-local multicast
+- `ff03::/16` - Realm-local multicast
+- `ff04::/16` - Admin-local multicast
+- `ff05::/16` - Site-local multicast
+
+<Info>
+Multicast is used by service discovery protocols like mDNS (Bonjour), SSDP (UPnP), and device discovery.
+</Info>
+
+## Enabling Local Network Access
+
+### Using the GUI
+
+<Steps>
+  <Step title="Open Settings">
+    Navigate to **Settings** → **VPN settings**
+  </Step>
+  
+  <Step title="Find Local Network Sharing">
+    Look for **Local network sharing** or **Allow LAN** setting
+  </Step>
+  
+  <Step title="Enable or Disable">
+    - Toggle **On** to allow local network access
+    - Toggle **Off** to block local network access (maximum security)
+  </Step>
+  
+  <Step title="Changes Apply Immediately">
+    No reconnection required - firewall rules update instantly
+  </Step>
+</Steps>
+
+### Using the CLI
+
+```bash
+# Enable local network access
+mullvad lan set allow
+
+# Disable local network access (default)
+mullvad lan set block
+
+# Check current setting
+mullvad lan get
+```
+
+Output:
+```
+Local network sharing setting: allow
+```
+
+or
+
+```
+Local network sharing setting: block
+```
+
+## What You Can Access
+
+When local network access is **enabled**:
+
+### Network Services
+
+✅ **Accessible**:
+- **Printers**: Network and WiFi printers
+- **File shares**: SMB/CIFS, NFS, AFP
+- **Network storage**: NAS devices, file servers
+- **Media servers**: Plex, Jellyfin, DLNA
+- **Streaming devices**: Chromecast, AirPlay, Roku
+- **Gaming**: Local multiplayer, game servers on LAN
+- **IoT devices**: Smart home hubs, lights, cameras
+- **Routers**: Web interfaces, management panels
+- **Development servers**: Local web servers, databases
+
+### Service Discovery Protocols
+
+✅ **Works**:
+- **mDNS/Bonjour**: Discover devices (`.local` domains)
+- **SSDP/UPnP**: Media devices, DLNA
+- **NetBIOS**: Windows network browsing
+- **SMB discovery**: Network neighborhood
+
+## Security Implications
+
+### Risks of Enabling Local Network Access
+
+<Warning>
+**Potential security risks:**
+
+1. **Local network attacks**: Malicious devices on local network can attack your device
+2. **Compromised networks**: If local network is compromised, your device is exposed
+3. **Public WiFi risks**: Dangerous on untrusted networks (cafes, hotels, airports)
+4. **Rogue devices**: Attackers on same WiFi can scan and probe your device
+5. **ARP spoofing**: Man-in-the-middle attacks on local network
+</Warning>
+
+### When to Enable
+
+✅ **Safe to enable on**:
+- **Home networks**: Trusted environment you control
+- **Office networks**: Corporate networks with security measures
+- **Trusted private networks**: Friends, family, known safe environments
+
+### When to Disable
+
+❌ **Should disable on**:
+- **Public WiFi**: Coffee shops, airports, hotels
+- **Shared networks**: Coworking spaces, libraries
+- **Untrusted networks**: Any network you don't control or trust
+- **Travel**: Unfamiliar networks abroad
+
+<Info>
+**Best practice**: Disable local network access by default. Enable only when needed and on trusted networks. Disable again when leaving home.
+</Info>
+
+## Use Cases
+
+### Home Office Setup
+
+```bash
+# At home - enable for printer and NAS access
+mullvad lan set allow
+
+# When traveling - disable for security
+mullvad lan set block
+```
+
+### Media Streaming
+
+Access local media servers and casting devices:
+
+1. Enable local network access
+2. Connect to VPN
+3. Stream to Chromecast, use Plex, access NAS
+4. Internet traffic still goes through VPN
+
+### Gaming
+
+Local multiplayer or LAN games:
+
+```bash
+# Enable LAN for local game servers
+mullvad lan set allow
+
+# Host or join LAN games
+# Internet traffic (matchmaking, updates) goes through VPN
+
+# Disable after gaming session
+mullvad lan set block
+```
+
+### Development
+
+Access local development servers:
+
+```bash
+# Enable to access localhost services on other devices
+mullvad lan set allow
+
+# Access: http://192.168.1.100:3000
+# (Development server on another machine)
+```
+
+## Private Custom DNS
+
+Local network access is required for private custom DNS servers:
+
+```bash
+# Enable local network access
+mullvad lan set allow
+
+# Set private DNS server (e.g., Pi-hole)
+mullvad dns set custom 192.168.1.100
+```
+
+Without local network access enabled:
+- Private DNS servers (`192.168.x.x`, `10.x.x.x`) are unreachable
+- DNS queries will fail
+- Internet access may not work
+
+<Note>
+Public custom DNS (e.g., `8.8.8.8`, `1.1.1.1`) does **not** require local network access. It's routed through the VPN tunnel.
+</Note>
+
+## Platform Differences
+
+### Windows, Linux, macOS
+
+- Local network access can be **enabled or disabled**
+- Firewall rules enforced at kernel level
+- Changes apply immediately
+- Full control over local network access
+
+### Android
+
+- Local network access can be **enabled or disabled**
+- Enforced via VPN Service API routing rules
+- Works as expected
+
+### iOS
+
+<Warning>
+**iOS limitation**: Local network is **always accessible** regardless of the setting.
+
+This is a limitation of iOS VPN APIs. The setting is shown for consistency but has no effect on iOS.
+</Warning>
+
+From the README (source/README.md:70):
+
+> \* The local network is always accessible on iOS with the current implementation
+
+## Compatibility
+
+Local network access works with:
+
+- ✅ [WireGuard protocol](/features/wireguard)
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [Multihop](/features/multihop)
+- ✅ [DAITA](/features/daita)
+- ✅ [Obfuscation protocols](/features/obfuscation)
+- ✅ [Split tunneling](/features/split-tunneling)
+- ✅ [Custom DNS](/features/custom-dns) (required for private DNS)
+- ✅ [Content blockers](/features/content-blockers)
+
+No conflicts with any other Mullvad features.
+
+## Troubleshooting
+
+### Cannot Access Local Devices
+
+If you can't reach local network devices:
+
+1. **Enable local network access**:
+   ```bash
+   mullvad lan set allow
+   ```
+
+2. **Verify setting**:
+   ```bash
+   mullvad lan get
+   ```
+   Should show: `Local network sharing setting: allow`
+
+3. **Check device IP**: Ensure target device is on private IP range
+   ```bash
+   # Ping local device
+   ping 192.168.1.100
+   ```
+
+4. **Check firewall**: Ensure target device's firewall allows connections
+
+5. **Verify network**: Ensure you're on the same network as target device
+
+### Local DNS Not Working
+
+If private DNS server is unreachable:
+
+1. **Enable local network access**:
+   ```bash
+   mullvad lan set allow
+   ```
+
+2. **Set private DNS**:
+   ```bash
+   mullvad dns set custom 192.168.1.1
+   ```
+
+3. **Test DNS resolution**:
+   ```bash
+   nslookup example.com 192.168.1.1
+   ```
+
+4. **Verify DNS server is running**: Check DNS server is online and accessible
+
+### Chromecast/AirPlay Not Working
+
+If casting devices aren't discovered:
+
+1. **Enable local network access**:
+   ```bash
+   mullvad lan set allow
+   ```
+
+2. **Restart casting app**: Close and reopen the app
+
+3. **Check device is on same network**: Ensure casting device and your device are on same WiFi
+
+4. **Check router**: Some routers have AP isolation that prevents device-to-device communication
+
+### SMB/Network Shares Not Visible
+
+1. **Enable local network access**
+
+2. **Manual connection**: Instead of browsing, connect directly by IP:
+   - **Windows**: `\\192.168.1.100\share`
+   - **macOS**: `smb://192.168.1.100/share`
+   - **Linux**: `smb://192.168.1.100/share`
+
+3. **Check credentials**: Ensure you have correct username/password
+
+4. **Check SMB version**: Older SMB versions may be disabled on modern systems
+
+## Best Practices
+
+### Network-Specific Settings
+
+<Tabs>
+  <Tab title="Home Network">
+    ```bash
+    # Safe to enable at home
+    mullvad lan set allow
+    ```
+    
+    Access your printers, NAS, smart home devices.
+  </Tab>
+  
+  <Tab title="Office Network">
+    ```bash
+    # Enable if needed for work resources
+    mullvad lan set allow
+    ```
+    
+    Access company file shares, printers, internal services.
+  </Tab>
+  
+  <Tab title="Public WiFi">
+    ```bash
+    # ALWAYS disable on public networks
+    mullvad lan set block
+    ```
+    
+    Maximum protection against local network attacks.
+  </Tab>
+  
+  <Tab title="Travel">
+    ```bash
+    # Disable on unfamiliar networks
+    mullvad lan set block
+    ```
+    
+    Don't trust hotel, airport, or cafe networks.
+  </Tab>
+</Tabs>
+
+### Automation Ideas
+
+**Script to toggle based on network** (example for macOS/Linux):
+
+```bash
+#!/bin/bash
+# Toggle LAN access based on WiFi SSID
+
+SSID=$(networksetup -getairportnetwork en0 | awk -F': ' '{print $2}')
+
+if [ "$SSID" = "HomeWiFi" ]; then
+    mullvad lan set allow
+    echo "Enabled LAN access on trusted network"
+else
+    mullvad lan set block
+    echo "Disabled LAN access on untrusted network"
+fi
+```
+
+### Security Hygiene
+
+1. **Default to disabled**: Only enable when needed
+2. **Disable on public WiFi**: Always block on untrusted networks
+3. **Review regularly**: Check setting when changing networks
+4. **Combine with firewall**: Use OS firewall for additional protection
+5. **Monitor connections**: Check for unexpected network activity
+
+## Technical Details
+
+### Firewall Implementation
+
+From source code (talpid-core/src/firewall/linux.rs:947):
+
+```rust
+fn add_allow_lan_rules(&mut self) {
+    // Add rules to allow private IP ranges
+    // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, etc.
+}
+```
+
+Firewall rules are added/removed based on `allow_lan` setting.
+
+### Always-Allowed Protocols
+
+Regardless of local network access setting, these protocols are **always allowed**:
+
+- **DHCPv4**: Client-server (ports 67-68)
+- **DHCPv6**: Client-server (ports 546-547)
+- **NDP subset**: Router solicitation/advertisement, neighbor solicitation/advertisement
+
+These are required for network connectivity and IP configuration.
+
+### Android Implementation
+
+From source code (talpid-tunnel/src/tun_provider/android/mod.rs:323-341):
+
+```rust
+if !config.allow_lan {
+    // Block all private IP ranges
+} else {
+    // Exclude private IPs from VPN routing
+    let (lan_ipv4, lan_ipv6) = allowed_lan_networks();
+    // Configure VPN to bypass these ranges
+}
+```
+
+Android uses VPN Service API to exclude private IPs from VPN routing.
+
+## Further Reading
+
+- [Private IP Address Ranges (RFC 1918)](https://tools.ietf.org/html/rfc1918)
+- [Link-Local Addresses (RFC 3927)](https://tools.ietf.org/html/rfc3927)
+- [Security on Public WiFi](https://mullvad.net/en/help/)
+
+## Related Features
+
+- [Custom DNS](/features/custom-dns) - Required for private DNS servers
+- [Split Tunneling](/features/split-tunneling) - Exclude apps from VPN
+- [WireGuard Protocol](/features/wireguard) - Base VPN protocol
+- [Kill Switch](/security/kill-switch) - Firewall enforcement

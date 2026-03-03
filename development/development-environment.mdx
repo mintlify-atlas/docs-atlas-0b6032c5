@@ -1,0 +1,472 @@
+---
+title: Development Environment Setup
+description: Set up your development environment for working on Mullvad VPN
+---
+
+## Quick Start
+
+For the fastest development setup:
+
+1. Clone the repository with submodules:
+   ```bash
+   git clone https://github.com/mullvad/mullvadvpn-app.git
+   cd mullvadvpn-app
+   git submodule update --init
+   git submodule update --init wireguard-go-rs/libwg/wireguard-go
+   ```
+
+2. Install Rust and setup for your platform:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ./scripts/setup-rust linux  # or macos, windows, android, ios
+   ```
+
+3. Install Node.js/npm via Volta and build dependencies:
+   ```bash
+   # Install volta first, then:
+   cd desktop
+   npm install -w mullvad-vpn
+   ```
+
+4. Start developing!
+
+## Detailed Setup by Platform
+
+### Linux Development
+
+#### Ubuntu/Debian
+
+```bash
+# System dependencies
+sudo apt update
+sudo apt install gcc libdbus-1-dev protobuf-compiler libprotobuf-dev rpm curl
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Install Volta for Node.js
+curl https://get.volta.sh | bash
+source ~/.bashrc
+
+# Install Go
+wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+
+# Clone and setup
+git clone https://github.com/mullvad/mullvadvpn-app.git
+cd mullvadvpn-app
+git submodule update --init
+git submodule update --init wireguard-go-rs/libwg/wireguard-go
+./scripts/setup-rust linux
+
+# Install Node dependencies
+cd desktop
+npm install -w mullvad-vpn
+cd ..
+```
+
+#### Fedora/RHEL
+
+```bash
+# System dependencies
+sudo dnf install gcc dbus-devel protobuf protobuf-devel rpm-build curl
+
+# Follow same steps as Ubuntu/Debian for Rust, Volta, Go, and repository setup
+```
+
+#### Nix Devshell
+
+The recommended approach on Linux:
+
+```bash
+# Install Nix
+sh <(curl -L https://nixos.org/nix/install) --daemon
+
+# Enable flakes (add to ~/.config/nix/nix.conf or /etc/nix/nix.conf)
+echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+
+# Enter devshell
+cd mullvadvpn-app
+nix develop
+
+# Optional: Use direnv for automatic environment activation
+sudo apt install direnv  # or dnf install direnv
+echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
+source ~/.bashrc
+direnv allow .
+```
+
+### macOS Development
+
+```bash
+# Install Homebrew if not already installed
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install required tools
+brew install bash volta go@1.21 protobuf
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Volta setup
+volta setup
+
+# Clone repository
+git clone https://github.com/mullvad/mullvadvpn-app.git
+cd mullvadvpn-app
+git submodule update --init
+git submodule update --init wireguard-go-rs/libwg/wireguard-go
+
+# Setup Rust targets
+./scripts/setup-rust macos
+
+# Install Node dependencies
+cd desktop
+npm install -w mullvad-vpn
+cd ..
+```
+
+**Important:** The default macOS bash (3.2.5) is too old. Make sure to use bash 4.0+ installed via Homebrew.
+
+#### iOS Development Setup
+
+Additional iOS requirements:
+
+```bash
+# Install iOS-specific Rust targets
+./scripts/setup-rust ios
+
+# Checkout iOS submodule
+git submodule update --init --recursive ios/wireguard-apple
+
+# Configure Xcode project
+cd ios
+for file in ./Configurations/*.template ; do cp $file ${file//.template/} ; done
+```
+
+Edit the `.xcconfig` files to add your Apple Developer Team ID and provisioning profile names.
+
+### Windows Development
+
+#### Prerequisites Installation
+
+1. **Install Visual Studio 2022**
+   - Download [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) or Visual Studio Community
+   - Select "Desktop development with C++" workload
+   - Ensure Windows 10/11 SDK is selected
+
+2. **Install Git for Windows**
+   - Download from [git-scm.com](https://git-scm.com/download/win)
+   - This provides Git Bash and Unix utilities
+
+3. **Install Rust**
+   ```bash
+   # In PowerShell
+   Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+   .\rustup-init.exe
+   ```
+
+4. **Install Zig**
+   - Download from [ziglang.org/download](https://ziglang.org/download/)
+   - Extract and add to PATH
+
+5. **Install Volta**
+   - Download MSI from [volta-cli/volta releases](https://github.com/volta-cli/volta/releases)
+   - Run installer
+
+6. **Install Go**
+   - Download installer from [golang.org](https://golang.org/dl/)
+   - Run installer
+
+7. **Install Protobuf**
+   - Download from [GitHub releases](https://github.com/protocolbuffers/protobuf/releases)
+   - Extract and add `bin/` to PATH
+
+#### Setup in Git Bash
+
+```bash
+# Clone repository
+git clone https://github.com/mullvad/mullvadvpn-app.git
+cd mullvadvpn-app
+git submodule update --init
+git submodule update --init wireguard-go-rs/libwg/wireguard-go
+
+# Setup Rust targets
+./scripts/setup-rust windows
+rustup target add i686-pc-windows-msvc
+
+# Setup Visual Studio environment
+. ./scripts/vcvars.sh
+
+# Verify msbuild is available
+which msbuild
+
+# Install Node dependencies
+cd desktop
+npm install -w mullvad-vpn
+cd ..
+```
+
+### Android Development
+
+#### Using Container (Recommended)
+
+This is the easiest and most reliable method:
+
+```bash
+# Install podman (or docker)
+sudo apt install podman
+
+# Build using container
+cd mullvadvpn-app
+./building/containerized-build.sh android --dev-build
+```
+
+#### Manual Setup on Linux
+
+```bash
+# Install JDK
+sudo apt install zip openjdk-17-jdk
+
+# Setup Android SDK
+mkdir -p ~/android
+export ANDROID_HOME=~/android
+cd $ANDROID_HOME
+
+wget https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+mkdir -p cmdline-tools
+unzip commandlinetools-linux-13114758_latest.zip -d cmdline-tools-latest
+mv cmdline-tools-latest/cmdline-tools cmdline-tools/latest
+rm -d cmdline-tools-latest
+
+./cmdline-tools/latest/bin/sdkmanager "platforms;android-36" \
+  "build-tools;36.0.0" "platform-tools" "ndk;27.3.13750724"
+
+# Configure Rust for Android
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.3.13750724"
+export NDK_TOOLCHAIN_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+# Add to ~/.bashrc
+cat >> ~/.bashrc << 'EOF'
+export ANDROID_HOME="$HOME/android"
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.3.13750724"
+export NDK_TOOLCHAIN_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+export AR_aarch64_linux_android="$NDK_TOOLCHAIN_DIR/llvm-ar"
+export CC_aarch64_linux_android="$NDK_TOOLCHAIN_DIR/aarch64-linux-android26-clang"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_TOOLCHAIN_DIR/aarch64-linux-android26-clang"
+# Add similar exports for armv7, x86_64, i686
+EOF
+
+source ~/.bashrc
+
+# Install Android Rust targets
+cd mullvadvpn-app
+./scripts/setup-rust android
+git submodule update --init android/rust-android-gradle-plugin
+```
+
+## Development Workflow
+
+### Running the Daemon
+
+**Linux/macOS:**
+```bash
+cargo build
+sudo MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+```
+
+**Windows:**
+```bash
+# Build Windows-specific modules first
+./build-windows-modules.sh
+cp dist-assets/binaries/x86_64-pc-windows-msvc/wintun.dll target/debug/
+
+# Run as SYSTEM user using PsExec
+psexec64 -i -s bash.exe
+MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+```
+
+**macOS specific:**
+```bash
+source env.sh  # Set macOS environment variables first
+```
+
+### Running the Desktop GUI
+
+With the daemon running, start the Electron app:
+
+```bash
+cd desktop
+npm run -w mullvad-vpn develop
+```
+
+The GUI will automatically reload when you change JavaScript/TypeScript files.
+
+### Running the CLI
+
+```bash
+cargo build -p mullvad-cli
+sudo ./target/debug/mullvad status
+```
+
+### Common Development Commands
+
+**Rust:**
+```bash
+cargo build                    # Build default workspace members
+cargo build --workspace       # Build all crates
+cargo test                    # Run tests
+cargo clippy                  # Run linter
+cargo fmt                     # Format code
+```
+
+**Desktop/Electron:**
+```bash
+cd desktop
+npm run -w mullvad-vpn develop     # Development mode with hot reload
+npm run -w mullvad-vpn lint         # Lint code
+npm test                            # Run tests
+npm run -w mullvad-vpn build-proto  # Build protobuf files
+```
+
+**Android:**
+```bash
+cd android
+./build.sh --dev-build             # Debug build
+./gradlew assembleOssProdDebug     # Gradle build
+./gradlew test                      # Run tests
+```
+
+## Environment Variables
+
+### Development-Specific Variables
+
+```bash
+# Use custom API endpoint
+export MULLVAD_API_HOST="api.mullvad.net"
+export MULLVAD_API_ADDR="10.10.1.2:443"
+export MULLVAD_API_DISABLE_TLS=1
+
+# Desktop app development
+export MULLVAD_PATH="/path/to/mullvad-problem-report"
+export MULLVAD_DISABLE_UPDATE_NOTIFICATION=1
+
+# Override directories
+export MULLVAD_SETTINGS_DIR="/tmp/mullvad-settings"
+export MULLVAD_LOG_DIR="/tmp/mullvad-logs"
+export MULLVAD_CACHE_DIR="/tmp/mullvad-cache"
+```
+
+See the full list of environment variables in the README.
+
+## Editor/IDE Setup
+
+### VS Code
+
+Recommended extensions:
+- rust-analyzer
+- ESLint
+- Prettier
+- TypeScript and JavaScript Language Features
+
+### IntelliJ/Android Studio
+
+For Android development, open the `android/` directory as a project.
+
+### Xcode
+
+For iOS development, open `ios/MullvadVPN.xcodeproj`.
+
+## Git Workflow
+
+### Post-Checkout Hook
+
+Automatically update Rust toolchain when version changes:
+
+```bash
+./scripts/setup-rust install-hook
+```
+
+### Submodule Updates
+
+When pulling changes that update submodules:
+
+```bash
+git pull
+git submodule update --init
+```
+
+### Commit Signing
+
+All merge commits to main must be GPG signed. Individual commits in feature branches don't require signing unless they modify security-critical files.
+
+## Troubleshooting
+
+### "command not found" errors
+
+Ensure all tools are in your PATH:
+```bash
+which rustc cargo go node npm protoc
+```
+
+### Rust toolchain issues
+
+```bash
+rustup update
+./scripts/setup-rust <platform>
+```
+
+### Node/npm version issues
+
+```bash
+volta install node@22.21.1
+volta install npm@11.7.0
+```
+
+### Permission denied when running daemon
+
+The daemon must run as root/SYSTEM:
+- Linux/macOS: Use `sudo`
+- Windows: Use PsExec to get SYSTEM shell
+
+### Submodule not found
+
+```bash
+git submodule update --init --recursive
+```
+
+### Build fails with "protoc: not found"
+
+Install protobuf compiler and ensure it's in PATH:
+```bash
+# Linux
+sudo apt install protobuf-compiler
+
+# macOS
+brew install protobuf
+
+# Verify
+protoc --version
+```
+
+### Android build fails on ARM64 Linux
+
+Follow the 2-stage build process described in the Building guide - build proto files on x64 first.
+
+### macOS: bash version too old
+
+```bash
+brew install bash
+which bash  # Should show /opt/homebrew/bin/bash or similar
+bash --version  # Should be 4.0+
+```
+
+## Next Steps
+
+- Read the [Building guide](building.mdx) for detailed build instructions
+- Explore the [Repository Structure](repository-structure.mdx) to understand the codebase
+- Check out the [security documentation](https://github.com/mullvad/mullvadvpn-app/tree/main/docs/security.md)
+- Review [contribution guidelines](https://github.com/mullvad/mullvadvpn-app/blob/main/CONTRIBUTING.md)

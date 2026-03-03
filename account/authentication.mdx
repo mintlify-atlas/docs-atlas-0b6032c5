@@ -1,0 +1,454 @@
+---
+title: Authentication & WireGuard Keys
+description: Understand WireGuard key management, automatic rotation, and security settings
+---
+
+Mullvad VPN uses WireGuard for secure tunneling. Each device has a unique WireGuard keypair that authenticates connections. This guide covers key management and rotation.
+
+## WireGuard Key Basics
+
+Authentication in Mullvad is based on **WireGuard public-key cryptography**:
+
+- Each device generates a **private key** (stored locally, never transmitted)
+- The corresponding **public key** is registered with your account
+- The VPN server authenticates devices using their public keys
+- No passwords or traditional credentials are used
+
+<Info>
+WireGuard keys provide both authentication and encryption. Your private key never leaves your device.
+</Info>
+
+## Key Generation
+
+Keys are automatically generated when you log in to an account.
+
+<Steps>
+  <Step title="Login Initiates Key Generation">
+    When you run `mullvad account login`, the daemon:
+
+    1. Generates a new WireGuard keypair (ed25519)
+    2. Keeps the private key locally in settings
+    3. Sends the public key to Mullvad's API
+    4. Creates a device entry associated with the public key
+  </Step>
+
+  <Step title="Key Storage">
+    Private keys are stored in:
+    - **Linux**: `/etc/mullvad-vpn/settings.json`
+    - **macOS**: `/Library/Preferences/Mullvad VPN/settings.json`  
+    - **Windows**: `%LOCALAPPDATA%\Mullvad VPN\settings.json`
+
+    The settings file is protected with restrictive permissions.
+  </Step>
+
+  <Step title="Associated Addresses">
+    When a key is registered, the API assigns:
+    - IPv4 address (e.g., `10.64.0.1/32`)
+    - IPv6 address (e.g., `fc00:bbbb:bbbb:bb01::1/128`)
+
+    These are your tunnel addresses for this device.
+  </Step>
+</Steps>
+
+## Viewing Your Public Key
+
+Check your current WireGuard public key and creation date.
+
+```bash
+mullvad tunnel get
+```
+
+Output includes:
+```
+WireGuard options
+MTU                : unset
+Quantum resistance : on
+DAITA              : false
+Public key         : wQEbFGkz9t2eR7L4xPmN6vK5cDaB0sXyJ8iU3hV/gW9=
+Created            : 2026-03-01 14:20:00 -05:00
+Rotation interval  : 720 hours
+Allowed IPs        : all traffic (default)
+
+Generic options  
+IPv6               : on
+```
+
+The `GetWireguardKey` RPC returns:
+- `key`: Base64-encoded public key
+- `created`: Timestamp when the key was generated
+
+## Automatic Key Rotation
+
+Mullvad automatically rotates WireGuard keys for enhanced security.
+
+### Why Rotate Keys?
+
+Key rotation provides:
+- **Forward secrecy**: Compromised old keys can't decrypt past traffic
+- **Reduced key exposure**: Limits the time window a key is active  
+- **Security best practice**: Regular rotation minimizes cryptographic key reuse
+
+### Default Rotation Interval
+
+By default, keys rotate every **30 days (720 hours)**.
+
+```bash
+mullvad tunnel get
+```
+```
+Rotation interval  : 720 hours
+```
+
+Constants from source:
+```rust
+const MIN_ROTATION_INTERVAL: Duration = Duration::from_hours(24);   // 1 day
+const MAX_ROTATION_INTERVAL: Duration = Duration::from_hours(720);  // 30 days  
+const DEFAULT_ROTATION_INTERVAL: Duration = MAX_ROTATION_INTERVAL;  // 30 days
+```
+
+### How Automatic Rotation Works
+
+<Steps>
+  <Step title="Rotation Timer Starts">
+    When connected, the daemon calculates time until next rotation:
+
+    ```
+    time_until_rotation = rotation_interval - key_age
+    ```
+
+    If the key is older than the interval, rotation happens immediately.
+  </Step>
+
+  <Step title="Rotation is Triggered">
+    When the timer expires, the daemon:
+
+    1. Generates a new WireGuard keypair
+    2. Uploads the new public key via API (`PUT /api/v1/accounts/devices/{id}/pubkey`)
+    3. Receives new tunnel addresses (IPv4 and IPv6)
+    4. Updates local settings with the new private key
+    5. Reconnects the tunnel with new credentials
+  </Step>
+
+  <Step title="Device Event Emitted">
+    A `DeviceEvent` with cause `ROTATED_KEY` is emitted:
+
+    ```protobuf
+    DeviceEvent {
+      cause: ROTATED_KEY
+      new_state: LOGGED_IN { ... }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Rotation is seamless. You'll experience a brief reconnection (typically under 5 seconds) but no service interruption.
+</Note>
+
+## Configuring Rotation Interval
+
+Customize how often WireGuard keys rotate.
+
+### Set Custom Interval
+
+Specify the interval in hours (between 24 and 720):
+
+```bash
+mullvad tunnel set rotation-interval 168
+```
+
+Output:
+```
+Set key rotation interval to 168 hours
+```
+
+Common intervals:
+- **24 hours** (1 day): Maximum security, frequent rotation
+- **168 hours** (7 days): Weekly rotation
+- **360 hours** (15 days): Bi-weekly rotation
+- **720 hours** (30 days): Default, monthly rotation
+
+### Reset to Default
+
+Reset to the default 30-day interval:
+
+```bash
+mullvad tunnel set rotation-interval any
+```
+
+Output:
+```
+Reset key rotation interval to 720 hours
+```
+
+### Rotation Interval Limits
+
+The rotation interval must be between **24 and 720 hours**:
+
+```bash
+# Too short - will fail
+mullvad tunnel set rotation-interval 12
+```
+```
+Error: Rotation interval must be at least 24 hours
+```
+
+```bash
+# Too long - will fail  
+mullvad tunnel set rotation-interval 1000
+```
+```  
+Error: Rotation interval must be at most 720 hours
+```
+
+<Warning>
+Setting rotation interval below 24 hours can cause excessive API requests and may impact performance. The minimum exists for rate-limiting purposes.
+</Warning>
+
+## Manual Key Rotation
+
+Force an immediate key rotation without waiting for the automatic interval.
+
+```bash
+mullvad tunnel set rotate-key
+```
+
+Output:
+```
+Rotated WireGuard key
+```
+
+### When to Manually Rotate
+
+Consider manual rotation if:
+- You suspect your private key was compromised
+- Moving to a new device and want fresh credentials
+- Testing key rotation functionality
+- Troubleshooting connection issues
+
+<Tip>
+Manual rotation resets the automatic rotation timer. The next automatic rotation will occur after your configured interval from now.
+</Tip>
+
+## Key Rotation Behavior When Disconnected
+
+Key rotation timing depends on connection state:
+
+### While Connected
+
+Rotation happens automatically based on the timer:
+```
+time_until_next_rotation = rotation_interval - (current_time - key_created_time)
+```
+
+### While Disconnected  
+
+The daemon doesn't actively rotate keys when disconnected. However:
+
+1. On next connection, it checks if rotation is overdue
+2. If `key_age > rotation_interval`, rotation happens immediately
+3. This ensures keys don't become stale during disconnection periods
+
+### On Daemon Restart
+
+When the daemon starts:
+1. Loads the existing key and creation timestamp from settings
+2. Calculates if rotation is overdue
+3. If connected and overdue, initiates rotation immediately
+4. Otherwise, schedules the next rotation
+
+## Key Replacement API
+
+The key rotation process uses the Device API's public key replacement endpoint.
+
+### Replace Public Key
+
+**Endpoint**: `PUT /api/v1/accounts/devices/{device_id}/pubkey`
+
+**Request Body**:
+```json
+{
+  "pubkey": "nR5tYvB8kL2xQmP0zDwF7eS3gH6iJ4uO9pC1aV/fK8="
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "abc123def456",
+  "name": "Happy Seagull",
+  "pubkey": "nR5tYvB8kL2xQmP0zDwF7eS3gH6iJ4uO9pC1aV/fK8=",
+  "ipv4_address": "10.64.0.1/32",
+  "ipv6_address": "fc00:bbbb:bbbb:bb01::1/128",
+  "hijack_dns": false,
+  "created": "2026-03-01T19:20:00Z"
+}
+```
+
+<Note>
+The API returns new tunnel addresses (IPv4/IPv6) which may differ from the previous ones. The daemon updates its configuration automatically.
+</Note>
+
+## Security Considerations
+
+### Private Key Protection
+
+Your WireGuard private key is security-critical:
+
+- **Never share** your private key or settings file
+- **Protect** settings file permissions (should be root/admin only)
+- **Rotate immediately** if you suspect key compromise
+- **Logout** properly from devices you no longer use (deletes keys)
+
+### Key Compromise Scenarios
+
+If your private key is compromised:
+
+<Steps>
+  <Step title="Rotate Immediately">
+    ```bash
+    mullvad tunnel set rotate-key
+    ```
+    This invalidates the old key and generates a new one.
+  </Step>
+
+  <Step title="Check Device List">
+    ```bash
+    mullvad account list-devices
+    ```
+    Remove any suspicious or unknown devices.
+  </Step>
+
+  <Step title="Review Account Access">
+    Verify no unauthorized devices have accessed your account.
+  </Step>
+</Steps>
+
+### Multiple Devices and Keys
+
+Each device has **independent keys**:
+- Device A's key rotation doesn't affect Device B
+- Keys are device-specific, not account-wide
+- Removing a device invalidates only that device's keys
+
+## Troubleshooting
+
+### Key Rotation Fails
+
+**Problem**: Key rotation initiated but connection fails.
+
+**Possible Causes**:
+- API connectivity issues
+- Account expired
+- Device limit reached (can't update device)
+
+**Solution**:
+1. Check account status: `mullvad account get`
+2. Verify connectivity to Mullvad API
+3. Check logs for specific error messages
+4. Try manual rotation: `mullvad tunnel set rotate-key`
+
+### Connection Drops During Rotation
+
+**Problem**: VPN disconnects briefly during automatic rotation.
+
+**Expected Behavior**: Brief disconnection (under 5 seconds) is normal during rotation.
+
+**If Prolonged**:
+1. Check if reconnection succeeds automatically
+2. Manually reconnect: `mullvad connect`  
+3. Review rotation interval - more frequent rotation = more disruptions
+
+### Old Key Still Active
+
+**Problem**: Old public key still showing after rotation.
+
+**Solution**:
+1. Refresh device info: The daemon updates automatically
+2. Verify with: `mullvad tunnel get` (check "Created" timestamp)
+3. Manually trigger: `mullvad tunnel set rotate-key`
+
+### Can't Set Rotation Interval
+
+**Problem**: Error when setting custom rotation interval.
+
+**Common Issues**:
+- Value outside 24-720 hour range
+- Non-integer value provided
+- Using minutes/days instead of hours
+
+**Correct Format**:
+```bash
+mullvad tunnel set rotation-interval 168  # 168 hours, not "7 days"
+```
+
+## Related Topics
+
+- [Account Management](/account/management) - Account creation and login
+- [Device Management](/account/device-management) - Managing multiple devices
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `mullvad tunnel get` | Display current tunnel options and public key |
+| `mullvad tunnel set rotation-interval <HOURS>` | Set automatic key rotation interval (24-720) |
+| `mullvad tunnel set rotation-interval any` | Reset to default rotation interval (720 hours) |
+| `mullvad tunnel set rotate-key` | Manually rotate WireGuard key immediately |
+
+## gRPC Service Reference
+
+| RPC | Request | Response | Description |
+|-----|---------|----------|-------------|
+| `SetWireguardRotationInterval` | Duration | Empty | Set automatic rotation interval |
+| `ResetWireguardRotationInterval` | Empty | Empty | Reset to default interval |
+| `RotateWireguardKey` | Empty | Empty | Force immediate key rotation |
+| `GetWireguardKey` | Empty | PublicKey | Get current public key and creation time |
+
+### PublicKey Message
+
+```protobuf
+message PublicKey {
+  bytes key = 1;                          // WireGuard public key (base64)
+  google.protobuf.Timestamp created = 2;  // Key creation timestamp
+}
+```
+
+### TunnelOptions Message
+
+```protobuf  
+message TunnelOptions {
+  optional uint32 mtu = 1;
+  google.protobuf.Duration rotation_interval = 2;  // Key rotation interval
+  QuantumResistantState quantum_resistant = 3;
+  DaitaSettings daita = 4;
+  bool enable_ipv6 = 5;
+  DnsOptions dns_options = 6;
+}
+```
+
+## Key Rotation Timeline Example
+
+Here's how automatic rotation works over time:
+
+```
+Day 0  (Mar 1): Login → Key generated → Created: Mar 1, 00:00
+Day 7  (Mar 8): Key age = 168h → Still valid (interval = 720h)
+Day 15 (Mar 16): Key age = 360h → Still valid  
+Day 30 (Mar 31): Key age = 720h → Rotation triggered automatically
+                 → New key generated → Created: Mar 31, 00:00
+Day 60 (Apr 30): Key age = 720h → Rotation triggered again
+```
+
+With custom 7-day interval:
+```
+Day 0: Login → Key created
+Day 7: Automatic rotation
+Day 14: Automatic rotation  
+Day 21: Automatic rotation
+Day 28: Automatic rotation
+```
+
+<Info>
+Each rotation generates fresh cryptographic material, ensuring your connection uses modern, uncompromised keys.
+</Info>

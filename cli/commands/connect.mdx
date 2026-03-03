@@ -1,0 +1,84 @@
+---
+title: "mullvad connect"
+description: "Connect to a VPN relay server"
+---
+
+## Overview
+
+The `mullvad connect` command establishes a VPN connection to a Mullvad relay server based on your current relay constraints.
+
+## Syntax
+
+```bash
+mullvad connect [OPTIONS]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-w`, `--wait` | Wait until connected before exiting |
+| `-h`, `--help` | Print help information |
+
+## Behavior
+
+When you run `mullvad connect`:
+
+1. The CLI checks if you're logged in to a Mullvad account
+2. If not logged in, it displays a warning and blocks all network traffic until you:
+   - Log in to an account with available time/credits
+   - Disconnect from the VPN
+3. If logged in, it initiates a connection to a relay matching your current constraints
+
+## Examples
+
+### Basic Connection
+
+Connect to a VPN relay without waiting:
+
+```bash
+mullvad connect
+```
+
+The command returns immediately, and the connection process continues in the background.
+
+### Wait for Connection
+
+Connect and wait until the connection is fully established:
+
+```bash
+mullvad connect --wait
+```
+
+This blocks until the tunnel state changes to "Connected" or an error occurs. The command prints tunnel state updates as the connection progresses.
+
+### Connection with Short Option
+
+```bash
+mullvad connect -w
+```
+
+## Related Commands
+
+- [disconnect](/cli/commands/disconnect) - Disconnect from the VPN
+- [status](/cli/commands/status) - Check current connection status
+- [relay set location](/cli/commands/relay) - Configure which relay to connect to
+- [account](/cli/commands/account) - Manage your Mullvad account
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Connection initiated successfully (or established if `--wait` used) |
+| 1 | Failed to connect or not logged in |
+
+## Notes
+
+- If you're not logged in when connecting, Mullvad will block all network traffic as a security measure
+- Use `mullvad status` to monitor connection progress
+- The relay selection is based on your current [relay constraints](/cli/commands/relay)
+- Connection attempts respect your [tunnel configuration](/cli/commands/tunnel) settings
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/tunnel_state.rs:7`

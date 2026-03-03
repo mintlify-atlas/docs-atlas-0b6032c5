@@ -1,0 +1,327 @@
+---
+title: Testing Overview
+description: Overview of testing infrastructure and test types in Mullvad VPN
+---
+
+Mullvad VPN uses a comprehensive testing strategy that includes unit tests, integration tests, end-to-end (e2e) tests, and UI tests across all platforms. This ensures reliability and quality across the desktop, Android, and iOS applications.
+
+## Test Types
+
+### Unit Tests
+
+Unit tests verify individual components and functions in isolation.
+
+#### Rust Unit Tests
+
+Rust unit tests are embedded within the source code using Rust's built-in testing framework.
+
+**Run all Rust unit tests:**
+```bash
+cargo test --workspace
+```
+
+**Run tests for a specific crate:**
+```bash
+cargo test -p mullvad-daemon
+cargo test -p mullvad-api
+cargo test -p talpid-core
+```
+
+**Run with test output visible:**
+```bash
+cargo test -- --nocapture
+```
+
+Test dependencies are configured in `Cargo.toml` workspaces with common testing libraries like `proptest` for property-based testing and `insta` for snapshot testing.
+
+#### Desktop Unit Tests (JavaScript/TypeScript)
+
+Unit tests for the desktop application use Vitest as the test runner.
+
+**Run desktop unit tests:**
+```bash
+cd desktop/packages/mullvad-vpn
+npm test
+```
+
+Unit tests are located in `desktop/packages/mullvad-vpn/test/unit/` and test utilities, helpers, and business logic:
+
+- Account validation (`account-number.spec.ts`)
+- Date and time helpers (`date-helper.spec.ts`)
+- IP address utilities (`ip.spec.ts`)
+- Tunnel state management (`tunnel-state.spec.ts`)
+- Notification logic (`notification-evaluation.spec.ts`)
+
+Tests use Vitest with the following configuration in `package.json`:
+```json
+"test": "cross-env NODE_ENV=test vitest test/unit"
+```
+
+#### Android Unit Tests
+
+Android unit tests use JUnit5 and are located in module-specific `test/` directories.
+
+**Run Android unit tests:**
+```bash
+cd android
+./gradlew testDebugUnitTest
+```
+
+**Run tests for a specific module:**
+```bash
+./gradlew :app:testDebugUnitTest
+./gradlew :lib:billing:testDebugUnitTest
+```
+
+Android test configuration in `app/build.gradle.kts`:
+```kotlin
+testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+testOptions {
+    unitTests.all { test ->
+        test.testLogging {
+            test.outputs.upToDateWhen { false }
+        }
+    }
+}
+```
+
+#### iOS Unit Tests
+
+iOS unit tests use XCTest and are organized into test targets.
+
+**Run iOS tests via Xcode:**
+```bash
+xcodebuild test -project ios/MullvadVPN.xcodeproj -scheme MullvadVPN
+```
+
+iOS test modules include:
+- `MullvadRESTTests` - API and REST client tests
+- `MullvadRustRuntimeTests` - Rust FFI integration tests
+- `MullvadPostQuantumTests` - Post-quantum cryptography tests
+
+### Integration Tests
+
+Integration tests verify interactions between components and with external services.
+
+#### Rust Integration Tests
+
+The test workspace (`test/` directory) contains a dedicated testing framework for end-to-end integration tests.
+
+**Test workspace structure:**
+- `test-manager` - Client that runs on the host and orchestrates tests
+- `test-runner` - Server that runs in guest VMs and provides RPC interface
+- `test-rpc` - Shared RPC interface and types
+- `connection-checker` - Network connectivity validation
+- `socks-server` - SOCKS proxy for testing
+
+**Build the test runner:**
+```bash
+# Linux
+./scripts/container-run.sh ./scripts/build/test-runner.sh linux
+
+# macOS
+./scripts/build/test-runner.sh macos
+
+# Windows (cross-compile from Linux)
+./scripts/container-run.sh ./scripts/build/test-runner.sh windows
+```
+
+**Run integration tests:**
+```bash
+cd test
+cargo run --bin test-manager run-tests --vm <vm-name> \
+    --display \
+    --account <account-number> \
+    --app-package <version>
+```
+
+### End-to-End Tests
+
+End-to-end tests verify complete user workflows and system behavior.
+
+#### Desktop E2E Tests
+
+Desktop e2e tests use Playwright and are written in TypeScript.
+
+**Test categories:**
+- **Mocked tests** (`test/e2e/mocked/`) - Run with mocked backend APIs
+- **Installed tests** (`test/e2e/installed/`) - Run against installed application
+
+**Run mocked e2e tests:**
+```bash
+cd desktop/packages/mullvad-vpn
+npm run e2e
+```
+
+**Run without rebuilding:**
+```bash
+npm run e2e:no-build
+```
+
+**Run installed app tests:**
+```bash
+npm run e2e:sequential
+```
+
+**Update test snapshots:**
+```bash
+npm run e2e:update-snapshots
+```
+
+Playwright configuration is in `playwright.config.ts` and `test/e2e/installed/playwright.config.ts`.
+
+#### Android E2E Tests
+
+Android e2e tests are instrumented tests that run on real devices or emulators.
+
+**Run Android e2e tests:**
+```bash
+cd android
+./gradlew :test:e2e:connectedDebugAndroidTest \
+    -Pmullvad.test.e2e.prod.accountNumber.valid=<account> \
+    -Pmullvad.test.e2e.prod.accountNumber.invalid=<invalid-account>
+```
+
+Android e2e tests require:
+- Valid Mullvad account number for authentication tests
+- Invalid account number for negative test cases
+- Access to Mullvad public infrastructure and APIs
+
+Test artifacts are stored in `/sdcard/Download/test-attachments` on the test device.
+
+### UI/Graphical Tests
+
+UI tests verify visual and interactive elements of the application.
+
+#### Desktop UI Tests
+
+Desktop UI tests are written in TypeScript using Playwright and located in `desktop/packages/mullvad-vpn/test/e2e/`.
+
+**Key test areas:**
+- Login flows (`login.spec.ts`)
+- Account expiry (`account-expiry.spec.ts`)
+- Connection states (`main.spec.ts`)
+- Settings screens (`settings.spec.ts`)
+- Location selection (`select-location/`)
+- Notifications (`notifications.spec.ts`)
+- Split tunneling (`split-tunneling.spec.ts`)
+
+**Build test executable:**
+```bash
+cd desktop/packages/mullvad-vpn
+npm run build-test-executable
+```
+
+UI tests can be invoked from Rust integration tests:
+```rust
+test_manager::tests::ui::run_test(&rpc, &["gui-test.spec"]).await.unwrap()
+```
+
+## Test Infrastructure
+
+### Test Manager Framework
+
+The test-manager provides a framework for writing integration tests:
+
+```rust
+#[test_function]
+pub async fn test(
+    rpc: ServiceClient,
+    mut mullvad_client: mullvad_management_interface::MullvadProxyClient,
+) -> Result<(), Error> {
+    // Test implementation
+    Ok(())
+}
+```
+
+Test modules in `test-manager/src/tests/`:
+- `account.rs` - Account management tests
+- `config.rs` - Configuration tests
+- `dns.rs` - DNS functionality tests
+- `tunnel.rs` - VPN tunnel tests
+- `tunnel_state.rs` - Tunnel state management
+- `access_methods.rs` - API access method tests
+- `audits/` - Security audit verification tests
+
+### CI/CD Testing
+
+Tests run automatically in GitHub Actions:
+
+**Desktop tests:**
+```bash
+cd desktop && npm run test --workspaces --if-present
+```
+
+**Android tests:**
+```bash
+./gradlew testDebugUnitTest
+./gradlew connectedDebugAndroidTest
+```
+
+**Rust tests:**
+```bash
+cargo test --workspace
+```
+
+## Running All Tests
+
+To run all tests across the project:
+
+```bash
+# Rust tests
+cargo test --workspace
+
+# Desktop tests
+cd desktop
+npm run test --workspaces --if-present
+
+# Desktop e2e tests
+cd packages/mullvad-vpn
+npm run e2e
+
+# Android tests
+cd ../../android
+./gradlew testDebugUnitTest
+```
+
+## Test Configuration
+
+### Workspace Configuration
+
+The root `Cargo.toml` defines workspace-wide test dependencies:
+```toml
+[workspace.dependencies]
+insta = { version = "1.42", features = ["yaml"] }
+proptest = "1.9"
+```
+
+### Linting and Code Quality
+
+Tests must pass the same linting rules as production code:
+```bash
+# Rust
+cargo clippy --all-targets --all-features
+
+# Desktop
+cd desktop && npm run lint
+
+# Android
+cd android && ./gradlew lint
+```
+
+## Best Practices
+
+1. **Write tests alongside code** - Unit tests should be close to the code they test
+2. **Use descriptive test names** - Test names should clearly indicate what is being tested
+3. **Test edge cases** - Include tests for error conditions and boundary cases
+4. **Keep tests fast** - Unit tests should run quickly; save longer tests for integration
+5. **Mock external dependencies** - Use mocked backends for faster and more reliable tests
+6. **Use test fixtures** - Share common test setup code across tests
+7. **Test public interfaces** - Focus on testing public APIs rather than internal implementation
+
+## Related Documentation
+
+- [Platform-Specific Testing](/development/platform-specific-testing)
+- [Architecture Overview](/development/architecture-overview)
+- [Build Instructions](/development/building)

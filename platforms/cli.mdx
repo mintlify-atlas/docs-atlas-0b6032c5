@@ -1,0 +1,708 @@
+---
+title: Command-Line Interface
+description: Complete reference for the Mullvad VPN CLI tool
+---
+
+The Mullvad VPN command-line interface (CLI) provides full control over the VPN client through terminal commands. It's ideal for automation, scripting, and advanced users who prefer terminal-based workflows.
+
+## Overview
+
+The CLI communicates with the `mullvad-daemon` system service to control all VPN functionality.
+
+### Binary Name
+
+```bash
+mullvad
+```
+
+### Platform Availability
+
+- **Windows**: `mullvad.exe` (in Program Files)
+- **macOS**: `/usr/local/bin/mullvad`
+- **Linux**: `/usr/bin/mullvad`
+
+<Info>
+  The CLI is automatically installed with the desktop application on all platforms.
+</Info>
+
+## Installation
+
+### Desktop Platforms
+
+The CLI is included with the desktop app installation:
+
+- **Automatic**: Installed alongside the GUI application
+- **PATH**: Added to system PATH during installation
+- **Permissions**: No special permissions required (communicates with daemon)
+
+### Verify Installation
+
+```bash
+mullvad version
+```
+
+Should display the installed version.
+
+## Basic Usage
+
+### Connection Management
+
+#### Connect to VPN
+
+```bash
+# Connect to VPN
+mullvad connect
+
+# Connect and wait until connected
+mullvad connect --wait
+mullvad connect -w
+```
+
+#### Disconnect from VPN
+
+```bash
+# Disconnect from VPN
+mullvad disconnect
+
+# Disconnect and wait until fully disconnected
+mullvad disconnect --wait
+mullvad disconnect -w
+```
+
+#### Reconnect
+
+```bash
+# Reconnect to VPN (disconnect and connect again)
+mullvad reconnect
+
+# Reconnect and wait
+mullvad reconnect --wait
+```
+
+### Check Status
+
+```bash
+# Show current connection status
+mullvad status
+
+# Show status with detailed information
+mullvad status -v
+mullvad status --verbose
+
+# Output status as JSON
+mullvad status --json
+```
+
+Example output:
+```
+Secured
+Connected to se-got-wg-001
+IPv4: 10.68.124.45
+IPv6: fc00:bbbb:bbbb:bb01::3:7c2c
+```
+
+## Account Management
+
+Manage your Mullvad account:
+
+### Login
+
+```bash
+# Login with account number
+mullvad account login 1234567890123456
+```
+
+### Account Information
+
+```bash
+# Show account information
+mullvad account show
+
+# Show account expiry
+mullvad account expiry
+```
+
+### Logout
+
+```bash
+# Logout and remove account from device
+mullvad account logout
+```
+
+### Device Management
+
+```bash
+# List devices on account
+mullvad account list-devices
+
+# Remove a device
+mullvad account remove-device <device-id>
+
+# Set device name
+mullvad account set-device-name "My Laptop"
+```
+
+## Server Selection
+
+### List Available Servers
+
+```bash
+# List all countries
+mullvad relay list countries
+
+# List all cities in a country
+mullvad relay list cities se  # Sweden
+
+# List all servers in a city
+mullvad relay list servers se got  # Gothenburg, Sweden
+```
+
+### Set Server Location
+
+```bash
+# Set specific country
+mullvad relay set location se
+
+# Set specific city
+mullvad relay set location se got
+
+# Set specific server
+mullvad relay set location se got-wg-001
+
+# Use any server
+mullvad relay set location any
+```
+
+### Server Constraints
+
+```bash
+# Show current constraints
+mullvad relay show
+
+# Set server by ownership
+mullvad relay set ownership mullvad-owned
+mullvad relay set ownership rented
+mullvad relay set ownership any
+
+# Set server by provider
+mullvad relay set provider 31173  # AS number
+```
+
+## Tunnel Configuration
+
+### WireGuard Settings
+
+```bash
+# Show current tunnel protocol
+mullvad tunnel show
+
+# Set WireGuard port
+mullvad tunnel wireguard port set 51820
+mullvad tunnel wireguard port set auto
+
+# Show WireGuard key
+mullvad tunnel wireguard key show
+
+# Rotate WireGuard key
+mullvad tunnel wireguard key rotate
+
+# Set custom MTU
+mullvad tunnel wireguard mtu set 1380
+mullvad tunnel wireguard mtu unset
+
+# Enable quantum-resistant tunnel
+mullvad tunnel wireguard quantum-resistant on
+mullvad tunnel wireguard quantum-resistant off
+```
+
+### Multihop
+
+```bash
+# Enable multihop
+mullvad tunnel wireguard multihop on
+
+# Disable multihop
+mullvad tunnel wireguard multihop off
+
+# Set entry location (used with multihop)
+mullvad relay set location entry se
+```
+
+### DAITA
+
+```bash
+# Enable DAITA (Defense Against AI-Guided Traffic Analysis)
+mullvad tunnel wireguard daita on
+
+# Disable DAITA
+mullvad tunnel wireguard daita off
+```
+
+## Obfuscation
+
+Configure obfuscation to bypass censorship:
+
+### Anti-Censorship Settings
+
+```bash
+# Show obfuscation settings
+mullvad anti-censorship show
+
+# Enable automatic obfuscation
+mullvad anti-censorship on
+
+# Disable obfuscation
+mullvad anti-censorship off
+
+# Set specific obfuscation protocol
+mullvad anti-censorship set protocol udp2tcp
+mullvad anti-censorship set protocol shadowsocks
+
+# Set obfuscation port
+mullvad anti-censorship set port auto
+mullvad anti-censorship set port 443
+```
+
+## DNS Configuration
+
+### DNS Settings
+
+```bash
+# Show current DNS settings
+mullvad dns show
+
+# Set custom DNS server (through tunnel)
+mullvad dns set custom 1.1.1.1
+mullvad dns set custom 1.1.1.1 1.0.0.1  # Multiple servers
+
+# Use default DNS (VPN server)
+mullvad dns set default
+
+# Enable content blocking
+mullvad dns set blocking-options ads trackers malware
+
+# Disable content blocking
+mullvad dns unset blocking-options
+```
+
+### Content Blocking Options
+
+- `ads` - Block advertisements
+- `trackers` - Block tracking domains
+- `malware` - Block malicious domains
+- `gambling` - Block gambling sites
+- `adult` - Block adult content
+- `social-media` - Block social media platforms
+
+## Split Tunneling
+
+Configure application exclusions:
+
+### Application-Based Split Tunneling
+
+```bash
+# Show split tunneling status
+mullvad split-tunnel show
+
+# Enable split tunneling
+mullvad split-tunnel on
+
+# Disable split tunneling
+mullvad split-tunnel off
+
+# Add application to exclusions
+mullvad split-tunnel add /usr/bin/firefox
+mullvad split-tunnel add "C:\Program Files\Firefox\firefox.exe"
+
+# Remove application from exclusions
+mullvad split-tunnel remove /usr/bin/firefox
+
+# List excluded applications
+mullvad split-tunnel list
+
+# Clear all exclusions
+mullvad split-tunnel clear
+```
+
+## Security Settings
+
+### Auto-Connect
+
+```bash
+# Enable auto-connect on app start
+mullvad auto-connect on
+
+# Disable auto-connect
+mullvad auto-connect off
+
+# Show current setting
+mullvad auto-connect show
+```
+
+### Lockdown Mode
+
+```bash
+# Enable lockdown mode (block traffic when disconnected)
+mullvad lockdown-mode on
+
+# Disable lockdown mode
+mullvad lockdown-mode off
+
+# Show current setting
+mullvad lockdown-mode show
+```
+
+### Local Network Sharing
+
+```bash
+# Enable local network access
+mullvad lan on
+
+# Disable local network access
+mullvad lan off
+
+# Show current setting
+mullvad lan show
+```
+
+## API Access Methods
+
+Configure how to reach Mullvad API:
+
+```bash
+# List API access methods
+mullvad api-access list
+
+# Add SOCKS5 proxy
+mullvad api-access add socks5 127.0.0.1:1080
+
+# Add Shadowsocks proxy
+mullvad api-access add shadowsocks <server-ip>:8388 <password> <cipher>
+
+# Enable/disable access method
+mullvad api-access enable <id>
+mullvad api-access disable <id>
+
+# Remove access method
+mullvad api-access remove <id>
+
+# Test access methods
+mullvad api-access test
+```
+
+## Custom Lists
+
+Create and manage lists of favorite servers:
+
+```bash
+# Create custom list
+mullvad custom-list create "My Favorites"
+
+# Add location to list
+mullvad custom-list add "My Favorites" se got
+
+# Remove location from list
+mullvad custom-list remove "My Favorites" se got
+
+# List all custom lists
+mullvad custom-list list
+
+# Delete custom list
+mullvad custom-list delete "My Favorites"
+
+# Select relay from custom list
+mullvad relay set location "My Favorites"
+```
+
+## Settings Management
+
+### Export Settings
+
+```bash
+# Export settings to file
+mullvad export-settings settings.json
+
+# Export to stdout
+mullvad export-settings -
+```
+
+### Import Settings
+
+```bash
+# Import settings from file
+mullvad import-settings settings.json
+
+# Import from stdin
+cat settings.json | mullvad import-settings -
+```
+
+### Reset Settings
+
+```bash
+# Reset all settings (stays logged in)
+mullvad reset-settings
+
+# Reset with confirmation prompt
+mullvad reset-settings --assume-yes
+
+# Factory reset (logout and clear everything)
+mullvad factory-reset
+mullvad factory-reset --assume-yes
+```
+
+## Beta Program
+
+Opt in/out of beta updates:
+
+```bash
+# Show beta program status
+mullvad beta-program show
+
+# Enable beta updates
+mullvad beta-program on
+
+# Disable beta updates
+mullvad beta-program off
+```
+
+## Logging
+
+Manage logging and tracing:
+
+```bash
+# Show current log level
+mullvad log show
+
+# Set log level
+mullvad log set-level error
+mullvad log set-level warning
+mullvad log set-level info
+mullvad log set-level debug
+mullvad log set-level trace
+
+# Enable verbose logging (all modules)
+mullvad log set-verbose on
+mullvad log set-verbose off
+
+# Set per-module log level
+mullvad log set-module mullvad_daemon=trace
+mullvad log unset-module mullvad_daemon
+```
+
+## Debugging Commands
+
+<Warning>
+  Debug commands are hidden and intended for internal testing. They may set the app in an invalid state.
+</Warning>
+
+```bash
+# Show hidden debug commands
+mullvad debug --help
+```
+
+## Shell Completions
+
+Generate shell completion scripts (Linux/macOS):
+
+```bash
+# Generate completions for bash
+mullvad shell-completions bash .
+
+# Generate completions for zsh
+mullvad shell-completions zsh .
+
+# Generate completions for fish
+mullvad shell-completions fish .
+```
+
+### Installing Completions
+
+#### Bash
+```bash
+mullvad shell-completions bash /usr/share/bash-completion/completions/
+```
+
+#### Zsh
+```bash
+mullvad shell-completions zsh /usr/local/share/zsh/site-functions/
+```
+
+#### Fish
+```bash
+mullvad shell-completions fish ~/.config/fish/completions/
+```
+
+## Scripting Examples
+
+### Auto-Connect on Specific Network
+
+```bash
+#!/bin/bash
+# Connect to VPN when on public WiFi
+
+SSID=$(iwgetid -r)
+
+if [[ "$SSID" == "CoffeeShop" || "$SSID" == "Airport" ]]; then
+    mullvad connect --wait
+    echo "Connected to VPN on public network"
+fi
+```
+
+### Rotate Between Servers
+
+```bash
+#!/bin/bash
+# Rotate to random server every hour
+
+while true; do
+    # Select random country
+    COUNTRY=$(mullvad relay list countries | shuf -n1)
+    
+    # Connect to random server in that country
+    mullvad relay set location "$COUNTRY"
+    mullvad reconnect --wait
+    
+    echo "Connected to $COUNTRY"
+    sleep 3600
+done
+```
+
+### Monitor Connection Status
+
+```bash
+#!/bin/bash
+# Monitor and log connection status
+
+while true; do
+    STATUS=$(mullvad status)
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$TIMESTAMP] $STATUS" >> vpn-log.txt
+    
+    # Alert if disconnected
+    if [[ "$STATUS" == *"Unsecured"* ]]; then
+        notify-send "VPN Disconnected" "Warning: No VPN connection!"
+    fi
+    
+    sleep 60
+done
+```
+
+### Connection Test Script
+
+```bash
+#!/bin/bash
+# Test connection to different servers
+
+for country in se de us; do
+    echo "Testing $country..."
+    mullvad relay set location "$country"
+    mullvad reconnect --wait
+    
+    # Test speed (requires speedtest-cli)
+    speedtest-cli --simple
+    
+    echo "---"
+done
+```
+
+## Output Formats
+
+Many commands support JSON output for scripting:
+
+```bash
+# Get status as JSON
+mullvad status --json
+
+# Parse with jq
+mullvad status --json | jq '.state'
+
+# Extract IP address
+mullvad status --json | jq -r '.ipv4'
+```
+
+## Exit Codes
+
+The CLI uses standard exit codes:
+
+- `0` - Success
+- `1` - General error
+- Other non-zero values indicate specific errors
+
+### Example Error Handling
+
+```bash
+if mullvad connect --wait; then
+    echo "Successfully connected"
+else
+    echo "Failed to connect" >&2
+    exit 1
+fi
+```
+
+## Environment Variables
+
+The CLI respects standard terminal environment variables:
+
+- `NO_COLOR` - Disable colored output
+- `MULLVAD_RPC_SOCKET_PATH` - Override daemon socket path (advanced)
+
+## Troubleshooting
+
+### CLI Cannot Connect to Daemon
+
+```bash
+# Check if daemon is running
+sudo systemctl status mullvad-daemon  # Linux
+sc.exe query mullvadvpn  # Windows
+sudo launchctl list | grep mullvad  # macOS
+
+# Check socket path
+ls -l /var/run/mullvad-vpn  # Linux/macOS
+```
+
+### Command Not Found
+
+```bash
+# Check if CLI is in PATH
+which mullvad
+
+# Linux: Ensure installed
+apt list --installed | grep mullvad
+
+# macOS: Check installation
+ls -l /usr/local/bin/mullvad
+
+# Windows: Check PATH includes Program Files
+echo %PATH%
+```
+
+### Permissions Errors
+
+The CLI communicates with the daemon via socket/pipe:
+
+- **Linux**: User must have access to `/var/run/mullvad-vpn` socket
+- **macOS**: Similar to Linux
+- **Windows**: All users should have access by default
+
+To restrict access (Linux/macOS):
+```bash
+# Set via environment variable
+export MULLVAD_MANAGEMENT_SOCKET_GROUP=vpnusers
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Desktop Guide" icon="desktop" href="/platforms/desktop">
+    Learn about the desktop application
+  </Card>
+  <Card title="Automation" icon="robot" href="/cli/automation">
+    Automate VPN with scripts
+  </Card>
+  <Card title="Settings Reference" icon="book" href="/essentials/settings">
+    Detailed settings documentation
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/essentials/troubleshooting">
+    Common CLI issues and solutions
+  </Card>
+</CardGroup>

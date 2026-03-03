@@ -1,0 +1,454 @@
+---
+title: Development Troubleshooting
+description: Solutions to common development and build issues
+icon: wrench
+---
+
+This guide covers common issues encountered during Mullvad VPN development and their solutions.
+
+## Build Issues
+
+### Cargo Build Failures
+
+#### "failed to run custom build command"
+
+**Cause:** Missing system dependencies or protobuf compiler.
+
+**Solution:**
+
+<Tabs>
+  <Tab title="Debian/Ubuntu">
+    ```bash
+    sudo apt install gcc libdbus-1-dev protobuf-compiler libprotobuf-dev
+    ```
+  </Tab>
+  <Tab title="Fedora/RHEL">
+    ```bash
+    sudo dnf install dbus-devel protobuf-devel
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    brew install protobuf
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Download protobuf compiler from [GitHub releases](https://github.com/protocolbuffers/protobuf/releases) and add to PATH.
+  </Tab>
+</Tabs>
+
+#### "could not find `wintun.dll`"
+
+**Platform:** Windows
+
+**Solution:**
+
+```bash
+cp dist-assets/binaries/x86_64-pc-windows-msvc/wintun.dll target/debug/
+```
+
+#### Linker errors on Windows
+
+**Cause:** Missing Visual Studio Build Tools or wrong environment.
+
+**Solution:**
+
+1. Install Visual Studio 2022 Build Tools
+2. Source the vcvars script:
+   ```bash
+   . ./scripts/vcvars.sh
+   ```
+
+### Node/NPM Issues
+
+#### "command not found: volta" or "wrong Node version"
+
+**Solution:**
+
+Install volta and let it manage Node.js versions:
+
+<Tabs>
+  <Tab title="Linux">
+    ```bash
+    curl https://get.volta.sh | bash
+    cd desktop
+    volta install node
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    brew install volta && volta setup
+    cd desktop
+    volta install node
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Download and install the MSI from [volta GitHub](https://github.com/volta-cli/volta/releases).
+  </Tab>
+</Tabs>
+
+#### "Cannot find module" or npm install fails
+
+**Solution:**
+
+```bash
+cd desktop
+rm -rf node_modules package-lock.json
+npm install -w mullvad-vpn
+```
+
+### Cross-compilation Issues
+
+#### ARM64 build fails on x64 Linux
+
+**Solution:**
+
+```bash
+# Install cross-compilation toolchain
+sudo dpkg --add-architecture arm64
+sudo apt update
+sudo apt install libdbus-1-dev:arm64 gcc-aarch64-linux-gnu
+
+# Add to ~/.cargo/config.toml
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+[target.aarch64-unknown-linux-gnu.dbus]
+rustc-link-search = ["/usr/aarch64-linux-gnu/lib"]
+rustc-link-lib = ["dbus-1"]
+```
+
+## Runtime Issues
+
+### Daemon Won't Start
+
+#### "Permission denied" or "Address already in use"
+
+**Cause:** Daemon must run as root/administrator.
+
+**Solution:**
+
+<Tabs>
+  <Tab title="Linux/macOS">
+    ```bash
+    sudo MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Run from an elevated (administrator) shell, or use PsExec:
+    ```powershell
+    psexec64 -i -s bash.exe
+    ./target/debug/mullvad-daemon.exe -vv
+    ```
+  </Tab>
+</Tabs>
+
+#### Daemon fails with "cannot connect to system service"
+
+**Cause:** RPC socket path mismatch or permissions.
+
+**Solution:**
+
+```bash
+# Linux/macOS: Check socket exists
+ls -la /var/run/mullvad-vpn
+
+# Set custom socket path if needed
+export MULLVAD_RPC_SOCKET_PATH="/path/to/socket"
+```
+
+### GUI Issues
+
+#### GUI shows "Lost contact with system service"
+
+**Cause:** Daemon not running or crashed.
+
+**Solution:**
+
+1. Check if daemon is running:
+   ```bash
+   # Linux
+   systemctl status mullvad-daemon
+   
+   # macOS
+   launchctl list | grep mullvad
+   
+   # Windows
+   sc query mullvadvpn
+   ```
+
+2. Check daemon logs:
+   - Linux/macOS: `/var/log/mullvad-vpn/daemon.log`
+   - Windows: `C:\ProgramData\Mullvad VPN\daemon.log`
+
+3. Restart the daemon
+
+#### GUI won't start in development mode
+
+**Solution:**
+
+```bash
+cd desktop/packages/mullvad-vpn
+npm run develop
+```
+
+Check console for errors. Common issues:
+- Daemon not running
+- Wrong `MULLVAD_PATH` environment variable
+- Missing dependencies
+
+### Tunnel Issues
+
+#### "Failed to set up tunnel" or connection timeouts
+
+**Debugging steps:**
+
+1. Enable verbose logging:
+   ```bash
+   sudo MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+   ```
+
+2. Check firewall isn't blocking:
+   ```bash
+   # Linux
+   sudo iptables -L -n
+   
+   # macOS  
+   sudo pfctl -sr
+   ```
+
+3. Test API connectivity:
+   ```bash
+   mullvad status
+   ```
+
+#### macOS: Offline detection stuck
+
+**Known issue:** macOS offline detection can be unreliable, especially after sleep.
+
+**Workaround:**
+
+```bash
+# Disable offline monitor
+export TALPID_DISABLE_OFFLINE_MONITOR=1
+sudo MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+```
+
+## Platform-Specific Issues
+
+### Windows
+
+#### "Failed to initialize split tunneling"
+
+**Cause:** Driver not loaded or incompatible.
+
+**Solution:**
+
+1. Check driver is loaded:
+   ```powershell
+   sc query mullvadst
+   ```
+
+2. Reinstall the driver (requires admin):
+   ```powershell
+   cd windows/split-tunnel
+   .\install.bat
+   ```
+
+#### BSOD or driver crashes
+
+**Cause:** Split tunnel driver issue.
+
+**Workaround:**
+
+Build without split tunneling or use older driver version. Report the issue with:
+- Windows version
+- Driver version
+- Crash dump
+
+### macOS
+
+#### "Full Disk Access required" for split tunneling
+
+**Cause:** macOS 10.15+ requires FDA permission.
+
+**Solution:**
+
+1. Go to System Preferences → Security & Privacy → Privacy → Full Disk Access
+2. Add `mullvad-daemon`
+3. Restart the daemon
+
+#### High CPU usage
+
+**Cause:** Bug in Electron or daemon monitoring.
+
+**Solution:**
+
+1. Update to latest Electron version
+2. Check for daemon log spam
+3. Profile with Activity Monitor or Instruments
+
+### Linux
+
+#### "Operation not permitted" with cgroups
+
+**Cause:** Insufficient permissions or cgroups not available.
+
+**Solution:**
+
+```bash
+# Check cgroup version
+mount | grep cgroup
+
+# For cgroup v2, set custom path if needed
+export TALPID_CGROUP2_FS="/sys/fs/cgroup"
+
+# For cgroup v1
+export TALPID_NET_CLS_MOUNT_DIR="/sys/fs/cgroup/net_cls"
+```
+
+#### GUI crashes immediately on startup
+
+**Cause:** Missing icon theme or AppArmor profile.
+
+**Solution:**
+
+```bash
+# Install required icon themes
+sudo apt install gnome-icon-theme
+
+# Check AppArmor isn't blocking (Ubuntu 24.04+)
+sudo aa-status | grep mullvad
+```
+
+## Debugging Tools
+
+### Environment Variables
+
+Use these environment variables for debugging:
+
+**Firewall Debugging:**
+```bash
+# Linux: Add packet counters
+export TALPID_FIREWALL_DEBUG=1
+
+# macOS: Log packets
+export TALPID_FIREWALL_DEBUG=all  # or 'pass' or 'drop'
+```
+
+**DNS Debugging:**
+```bash
+# Disable local DNS resolver (macOS)
+export TALPID_DISABLE_LOCAL_DNS_RESOLVER=1
+
+# Choose DNS configuration method
+export TALPID_DNS_MODULE=systemd  # Linux: static-file, resolvconf, network-manager
+export TALPID_DNS_MODULE=netsh    # Windows: iphlpapi, tcpip
+```
+
+**WireGuard:**
+```bash
+# Force userspace WireGuard
+export TALPID_FORCE_USERSPACE_WIREGUARD=1
+```
+
+**API Debugging (dev builds only):**
+```bash
+export MULLVAD_API_HOST=api.mullvad.net
+export MULLVAD_API_ADDR=10.10.1.2:443
+export MULLVAD_CONNCHECK_HOST=am.i.mullvad.net
+```
+
+**Backtrace on Crash:**
+```bash
+export MULLVAD_BACKTRACE_ON_FAULT=1
+```
+
+<Warning>
+`MULLVAD_BACKTRACE_ON_FAULT` causes heap allocation in signal handlers (undefined behavior). Use with caution!
+</Warning>
+
+### Logging
+
+**Increase log verbosity:**
+
+```bash
+# -v: verbose, -vv: very verbose
+mullvad-daemon -vv
+```
+
+**Log locations:**
+- Linux/macOS: `/var/log/mullvad-vpn/daemon.log`
+- Windows: `%PROGRAMDATA%\Mullvad VPN\daemon.log`
+
+**Frontend logs:**
+- Open DevTools in GUI (Ctrl+Shift+I / Cmd+Option+I)
+- Check Console tab for JavaScript errors
+
+### Testing API Connectivity
+
+```bash
+# Check connection
+curl -v https://api.mullvad.net/
+
+# Test with custom host (dev builds)
+MULLVAD_API_HOST=api.mullvad.net mullvad status
+```
+
+### Capturing Network Traffic
+
+<Tabs>
+  <Tab title="Linux">
+    ```bash
+    # Capture on tunnel interface
+    sudo tcpdump -i wg0-mullvad -w capture.pcap
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    # Capture PF firewall logs
+    sudo tcpdump -i pflog0
+    
+    # Capture on tunnel
+    sudo tcpdump -i utun3 -w capture.pcap
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Use Wireshark with Npcap driver.
+  </Tab>
+</Tabs>
+
+## Getting Help
+
+If you're still stuck:
+
+1. **Check existing issues:** [GitHub Issues](https://github.com/mullvad/mullvadvpn-app/issues)
+2. **Search discussions:** [GitHub Discussions](https://github.com/mullvad/mullvadvpn-app/discussions)
+3. **Read documentation:** Check docs/ folder in repo
+4. **Report a bug:** Include:
+   - OS and version
+   - Mullvad version
+   - Steps to reproduce
+   - Relevant logs
+   - Expected vs actual behavior
+
+<Tip>
+When reporting issues, run `mullvad-problem-report` to generate a problem report with sanitized logs.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build Instructions" icon="hammer" href="/development/build-instructions">
+    Complete build setup guide
+  </Card>
+  <Card title="Known Issues" icon="triangle-exclamation" href="/development/known-issues">
+    Platform-specific limitations and issues
+  </Card>
+  <Card title="Release Process" icon="rocket" href="/development/release-process">
+    How to create a release
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understanding the codebase
+  </Card>
+</CardGroup>

@@ -1,0 +1,372 @@
+---
+title: 'DAITA'
+description: 'Defense Against AI-Guided Traffic Analysis - Advanced protection against sophisticated traffic analysis attacks'
+---
+
+## Overview
+
+**DAITA** (Defense Against AI-Guided Traffic Analysis) is a cutting-edge feature that protects against sophisticated traffic analysis attacks, including those powered by artificial intelligence and machine learning.
+
+Even with encrypted VPN tunnels, adversaries can analyze traffic patterns—such as packet sizes, timing, and volume—to infer what you're doing online. DAITA defeats these attacks by:
+
+- **Constant packet size padding**: Normalizes packet sizes to prevent size-based fingerprinting
+- **Traffic pattern obfuscation**: Adds noise to make traffic patterns unpredictable
+- **Protection against ML-based attacks**: Specifically designed to resist AI-guided analysis
+
+<Note>
+DAITA is available on Windows, Linux, macOS, and Android. iOS support is not yet available.
+</Note>
+
+## How Traffic Analysis Works
+
+### The Threat
+
+Traditional encryption protects the **content** of your traffic, but not its **metadata**:
+
+- **Packet sizes**: Different websites and services have unique size patterns
+- **Timing patterns**: The timing between packets can reveal the type of activity
+- **Volume patterns**: Overall traffic volume can indicate streaming, browsing, or downloads
+
+Advanced adversaries can use these patterns to:
+- Identify which websites you visit
+- Determine what type of content you're accessing
+- Fingerprint your online activities
+
+### AI-Guided Analysis
+
+Modern attacks use machine learning to:
+- Train models on known traffic patterns
+- Classify encrypted traffic with high accuracy
+- Identify patterns even through VPN encryption
+
+<Warning>
+Research has shown that machine learning models can identify websites with over 90% accuracy by analyzing only packet sizes and timing, even through encrypted VPN connections.
+</Warning>
+
+## How DAITA Works
+
+### Constant Packet Size
+
+DAITA normalizes packet sizes to prevent size-based fingerprinting:
+
+```
+Without DAITA:                With DAITA:
+[100 bytes]                   [1400 bytes]
+[500 bytes]     ──────→       [1400 bytes]
+[1200 bytes]                  [1400 bytes]
+[300 bytes]                   [1400 bytes]
+```
+
+All packets are padded to the same size, removing size-based patterns.
+
+### Traffic Shaping
+
+DAITA adds carefully designed noise to traffic patterns:
+- **Dummy traffic**: Random packets sent to obscure real traffic patterns
+- **Timing randomization**: Varies packet send times to break timing correlations
+- **Volume normalization**: Smooths out traffic bursts
+
+### Defense Depth
+
+DAITA is designed with multiple layers of protection:
+
+1. **Packet-level**: Constant size padding
+2. **Flow-level**: Traffic pattern obfuscation
+3. **Session-level**: Behavioral pattern randomization
+
+## Implementation Details
+
+### Entry Server Requirement
+
+DAITA is applied at the **entry server** (first hop) of your connection:
+
+- For **single-hop connections**: The selected relay must support DAITA
+- For **multihop connections**: The entry server must support DAITA
+
+<Info>
+Not all Mullvad servers support DAITA. When enabled, the app automatically selects DAITA-capable servers.
+</Info>
+
+### Direct Only Mode
+
+DAITA has two operating modes:
+
+<Tabs>
+  <Tab title="Direct Only Enabled">
+    **Strict DAITA requirement**: Connections only allowed to DAITA-capable servers directly.
+    
+    - Will **fail** if selected server doesn't support DAITA
+    - No automatic multihop fallback
+    - Maximum DAITA coverage
+    - Recommended for highest security
+  </Tab>
+  
+  <Tab title="Direct Only Disabled">
+    **Automatic multihop fallback**: If selected server doesn't support DAITA, automatically use multihop.
+    
+    - DAITA enabled on entry server
+    - Selected server becomes exit server
+    - Maintains DAITA protection
+    - Better compatibility
+  </Tab>
+</Tabs>
+
+### Automatic Multihop Behavior
+
+From the test suite (test-manager/src/tests/daita.rs:66-85):
+
+```rust
+// When direct_only is disabled:
+// - Non-DAITA relay → Auto multihop with DAITA entry
+// - DAITA relay → Direct connection
+
+// When direct_only is enabled:
+// - Non-DAITA relay → Connection fails
+// - DAITA relay → Direct connection
+```
+
+## Enabling DAITA
+
+### Using the GUI
+
+<Steps>
+  <Step title="Open VPN Settings">
+    Navigate to **Settings** → **VPN settings**
+  </Step>
+  
+  <Step title="Enable DAITA">
+    Toggle **DAITA** to **On**
+  </Step>
+  
+  <Step title="Configure Direct Only (Optional)">
+    - **Enable "Direct only"**: Only connect to DAITA servers directly (strictest)
+    - **Disable "Direct only"**: Allow automatic multihop fallback (more flexible)
+  </Step>
+  
+  <Step title="Reconnect">
+    The app will reconnect to a DAITA-capable server
+  </Step>
+</Steps>
+
+### Using the CLI
+
+```bash
+# Enable DAITA
+mullvad relay set tunnel wireguard daita on
+
+# Enable "Direct only" mode (strict)
+mullvad relay set tunnel wireguard daita-direct-only on
+
+# Disable "Direct only" (allow auto-multihop)
+mullvad relay set tunnel wireguard daita-direct-only off
+
+# Disable DAITA
+mullvad relay set tunnel wireguard daita off
+
+# Check DAITA status
+mullvad status -v
+```
+
+### Verify DAITA is Active
+
+```bash
+mullvad status -v
+```
+
+Output should show:
+```
+Connected to se-sto-wg-001
+DAITA: yes
+```
+
+The GUI displays a DAITA indicator in the connection panel when active.
+
+## Performance Impact
+
+### Expected Overhead
+
+- **Bandwidth**: 10-20% increase due to padding and dummy traffic
+- **Latency**: Minimal increase (typically &lt;10ms)
+- **CPU usage**: Slight increase from additional processing
+
+### Bandwidth Usage
+
+DAITA adds overhead to protect your privacy:
+- All packets padded to maximum size
+- Periodic dummy packets sent
+- Background noise traffic
+
+<Warning>
+DAITA increases bandwidth usage. If you have a limited data plan, monitor your usage carefully.
+</Warning>
+
+### Battery Impact (Mobile)
+
+On Android devices:
+- Moderate battery impact from continuous traffic
+- Additional CPU processing for packet manipulation
+- Consider disabling on battery-constrained devices
+
+## Server Selection
+
+### DAITA-Capable Servers
+
+Not all Mullvad servers support DAITA:
+- Check server list for DAITA indicator
+- Servers are gradually being upgraded
+- Higher-capacity servers typically support DAITA first
+
+### Automatic Server Selection
+
+When DAITA is enabled:
+
+**Direct Only Enabled:**
+- Only DAITA-capable servers shown in server list
+- Connection fails if non-DAITA server manually selected
+
+**Direct Only Disabled:**
+- All servers available
+- Non-DAITA servers use automatic multihop with DAITA entry
+
+### Manual Server Selection
+
+```bash
+# List DAITA-capable servers
+mullvad relay list
+
+# Select specific DAITA server
+mullvad relay set location se sto se-sto-wg-001
+
+# Let app choose optimal DAITA server
+mullvad relay set location se sto
+```
+
+## Compatibility
+
+DAITA works with:
+
+- ✅ [WireGuard protocol](/features/wireguard)
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [Multihop connections](/features/multihop)
+- ✅ [Obfuscation protocols](/features/obfuscation)
+- ✅ [Custom DNS](/features/custom-dns)
+- ❌ Custom tunnel configurations (DAITA ignored)
+
+### Example: Maximum Protection
+
+Combine DAITA with other security features:
+
+```bash
+# Enable all advanced security features
+mullvad relay set tunnel wireguard daita on
+mullvad relay set tunnel wireguard quantum-resistant on
+mullvad relay set tunnel wireguard use-multihop on
+```
+
+## Limitations
+
+### Platform Support
+
+| Platform | DAITA Support | Notes |
+|----------|---------------|-------|
+| Windows | ✅ Yes | Full support |
+| Linux | ✅ Yes | Full support |
+| macOS | ✅ Yes | Full support |
+| Android | ✅ Yes | May impact battery |
+| iOS | ❌ Not yet | Coming in future release |
+
+### WebKit Browsers (macOS)
+
+On macOS, WebKit-based browsers (Safari, etc.) cannot be excluded from split tunneling while DAITA is active due to IPC limitations.
+
+### Connection Restrictions
+
+- Requires DAITA-capable relay servers
+- May reduce available server selection
+- Some geographic locations may have limited DAITA servers
+
+## Troubleshooting
+
+### Connection Failures
+
+If unable to connect with DAITA:
+
+1. **Check server support**: Verify selected server supports DAITA
+   ```bash
+   mullvad relay list | grep -i daita
+   ```
+
+2. **Disable Direct Only**: Allow automatic multihop fallback
+   ```bash
+   mullvad relay set tunnel wireguard daita-direct-only off
+   ```
+
+3. **Select different location**: Choose area with DAITA servers
+   ```bash
+   mullvad relay set location se
+   ```
+
+4. **Temporary disable**: Isolate if DAITA is causing issue
+   ```bash
+   mullvad relay set tunnel wireguard daita off
+   ```
+
+### Performance Issues
+
+If experiencing slow speeds:
+- **Check bandwidth overhead**: DAITA adds 10-20% overhead
+- **Try different server**: Some DAITA servers have higher capacity
+- **Monitor CPU usage**: Ensure device isn't CPU-constrained
+
+### Multihop Entry Selection
+
+When DAITA overrides entry server selection:
+
+> "The entry server for Multihop is currently overridden by DAITA. To select an entry server, please first enable 'Direct only' or disable DAITA in the settings."
+
+This is expected behavior when "Direct only" is disabled.
+
+## Technical Resources
+
+- [Mullvad's DAITA Announcement](https://mullvad.net/en/blog/introducing-defense-against-ai-guided-traffic-analysis-daita)
+- [Traffic Analysis Research Papers](https://www.ndss-symposium.org/)
+- [Mullvad's DAITA Implementation (Source Code)](https://github.com/mullvad/mullvadvpn-app)
+
+## Security Considerations
+
+### What DAITA Protects Against
+
+✅ **Protected:**
+- Website fingerprinting attacks
+- AI-guided traffic classification
+- Packet size analysis
+- Timing correlation attacks
+- Volume-based identification
+
+### What DAITA Does NOT Protect Against
+
+❌ **Not Protected:**
+- DNS leaks (use [Custom DNS](/features/custom-dns))
+- IP address exposure (ensured by [kill switch](/security/kill-switch))
+- Browser fingerprinting (use Tor Browser for maximum anonymity)
+- Compromise of VPN servers themselves
+- Malware or keyloggers on your device
+
+<Warning>
+DAITA is a defense-in-depth measure. Use it alongside other security best practices for comprehensive protection.
+</Warning>
+
+## Best Practices
+
+1. **Enable Direct Only**: For strictest DAITA coverage
+2. **Combine with Multihop**: Add additional anonymity layer
+3. **Use Quantum Resistance**: Protect against future threats
+4. **Monitor Bandwidth**: Track usage if on limited data plan
+5. **Test Performance**: Ensure acceptable speed for your use case
+
+## Related Features
+
+- [WireGuard Protocol](/features/wireguard) - Base protocol
+- [Multihop](/features/multihop) - Multi-server routing
+- [Quantum-Resistant Tunnels](/features/quantum-resistant) - Post-quantum crypto
+- [Obfuscation](/features/obfuscation) - VPN blocking resistance

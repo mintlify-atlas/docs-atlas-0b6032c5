@@ -1,0 +1,705 @@
+---
+title: 'Content Blockers'
+description: 'Block ads, trackers, malware, adult content, gambling, and social media at the DNS level'
+---
+
+## Overview
+
+Content blockers use **DNS-based filtering** to block unwanted content before it reaches your device. When enabled, Mullvad's DNS resolver returns a non-routable address for blocked domains, preventing your device from connecting to them.
+
+Available blockers:
+- **Ads**: Advertising networks and services
+- **Trackers**: Analytics and tracking domains
+- **Malware**: Known malicious domains
+- **Adult Content**: Adult and NSFW websites
+- **Gambling**: Betting and gambling sites
+- **Social Media**: Social networking platforms
+
+<Note>
+Content blockers are available on all platforms: Windows, Linux, macOS, Android, and iOS.
+</Note>
+
+## How DNS-Based Blocking Works
+
+### Normal DNS Resolution
+
+```
+Browser: "What's the IP of ad-network.com?"
+   │
+   ▼
+DNS Resolver: "It's 192.0.2.1"
+   │
+   ▼
+Browser: [Connects to 192.0.2.1 and loads ads]
+```
+
+### With Content Blocker Enabled
+
+```
+Browser: "What's the IP of ad-network.com?"
+   │
+   ▼
+DNS Resolver: "Domain blocked - 0.0.0.0"
+   │
+   ▼
+Browser: [Cannot connect - no ads loaded]
+```
+
+The DNS resolver returns:
+- `0.0.0.0` (non-routable address), OR
+- `NXDOMAIN` (domain does not exist)
+
+This prevents the connection from being established.
+
+## Available Content Blockers
+
+### Ads
+
+**Blocks**: Advertising networks, banner ads, video ads, pop-ups
+
+**Examples**:
+- `doubleclick.net`
+- `googlesyndication.com`
+- `advertising.com`
+- Ad servers and networks
+
+**Use cases**:
+- Cleaner browsing experience
+- Faster page loading
+- Reduced bandwidth usage
+- Privacy improvement (ads track you)
+
+### Trackers
+
+**Blocks**: Analytics services, tracking pixels, user profiling
+
+**Examples**:
+- `google-analytics.com`
+- `facebook.com` tracking pixels
+- `hotjar.com`
+- Analytics and heat mapping services
+
+**Use cases**:
+- Enhanced privacy
+- Prevent behavioral tracking
+- Reduce data collection
+- Limit cross-site tracking
+
+### Malware
+
+**Blocks**: Known malicious domains, phishing sites, malware distribution
+
+**Examples**:
+- Phishing websites
+- Malware download sites
+- Command & control servers
+- Compromised domains
+
+**Use cases**:
+- Security protection
+- Phishing prevention
+- Malware blocking
+- Safe browsing
+
+<Info>
+The malware blocker uses threat intelligence feeds that are regularly updated to block newly discovered malicious domains.
+</Info>
+
+### Adult Content
+
+**Blocks**: Adult websites, NSFW content, pornography
+
+**Use cases**:
+- Parental controls
+- Family safety
+- Workplace compliance
+- Personal accountability
+
+### Gambling
+
+**Blocks**: Online gambling, betting sites, casinos
+
+**Examples**:
+- Online casinos
+- Sports betting sites
+- Poker platforms
+- Lottery websites
+
+**Use cases**:
+- Responsible gambling support
+- Financial protection
+- Workplace productivity
+- Self-imposed restrictions
+
+### Social Media
+
+**Blocks**: Social networking platforms
+
+**Examples**:
+- Facebook/Meta properties
+- Twitter/X
+- Instagram
+- TikTok
+- LinkedIn
+- Reddit
+
+**Use cases**:
+- Digital wellness
+- Productivity improvement
+- Reduce screen time
+- Focus enhancement
+
+<Warning>
+Blocking social media may affect authentication ("Sign in with Facebook") and social sharing features on other websites.
+</Warning>
+
+## Enabling Content Blockers
+
+### Using the GUI
+
+<Steps>
+  <Step title="Open DNS Settings">
+    Navigate to **Settings** → **VPN settings** → **DNS settings**
+  </Step>
+  
+  <Step title="Ensure Default DNS">
+    Make sure **Use default DNS** is selected (not custom DNS)
+  </Step>
+  
+  <Step title="Enable Desired Blockers">
+    Toggle on the blockers you want:
+    
+    **Privacy & Security** (recommended for everyone):
+    - ☑ **Block ads**
+    - ☑ **Block trackers**
+    - ☑ **Block malware**
+    
+    **Additional Filters** (optional):
+    - ☐ **Block adult content**
+    - ☐ **Block gambling**
+    - ☐ **Block social media**
+  </Step>
+  
+  <Step title="Changes Apply Immediately">
+    No reconnection required - blockers activate instantly
+  </Step>
+</Steps>
+
+### Using the CLI
+
+<Tabs>
+  <Tab title="Privacy & Security">
+    Enable ads, trackers, and malware blocking:
+    ```bash
+    mullvad dns set default \
+      --block-ads \
+      --block-trackers \
+      --block-malware
+    ```
+  </Tab>
+  
+  <Tab title="All Blockers">
+    Enable all available content blockers:
+    ```bash
+    mullvad dns set default \
+      --block-ads \
+      --block-trackers \
+      --block-malware \
+      --block-adult-content \
+      --block-gambling \
+      --block-social-media
+    ```
+  </Tab>
+  
+  <Tab title="Specific Blockers">
+    Enable only specific blockers:
+    ```bash
+    # Only malware blocking
+    mullvad dns set default --block-malware
+    
+    # Malware + adult content
+    mullvad dns set default \
+      --block-malware \
+      --block-adult-content
+    ```
+  </Tab>
+  
+  <Tab title="Disable All">
+    Return to unfiltered DNS:
+    ```bash
+    mullvad dns set default
+    ```
+  </Tab>
+</Tabs>
+
+### Check Current Settings
+
+```bash
+mullvad dns get
+```
+
+Output:
+```
+Custom DNS: no
+Block ads: true
+Block trackers: true
+Block malware: true
+Block adult content: false
+Block gambling: false
+Block social media: false
+```
+
+## What Content Blockers Can and Cannot Do
+
+### ✅ What DNS Blocking CAN Do
+
+- **Block entire domains**: Prevent connections to blocked domains
+- **Prevent tracking pixels**: Block analytics and tracking scripts
+- **Stop malware downloads**: Block known malicious domains
+- **Filter ads**: Remove ads from most websites and apps
+- **System-wide blocking**: Works for all apps (not just browsers)
+- **No software installation**: Built into Mullvad's DNS
+
+### ❌ What DNS Blocking CANNOT Do
+
+- **Block specific URLs**: Cannot block `example.com/ads` while allowing `example.com`
+- **Block first-party ads**: Cannot block ads served from the same domain (e.g., YouTube ads from `youtube.com`)
+- **Block inline content**: Cannot remove ads already embedded in HTML
+- **Granular control**: Cannot block specific elements on a page
+- **Bypass HTTPS inspection**: Cannot see encrypted HTTPS content
+- **Cosmetic filtering**: Cannot hide blocked ad spaces (browser ad blockers do this)
+
+<Info>
+**DNS blocking vs. Browser ad blockers:**
+- DNS blocking: Prevents connections to entire domains
+- Browser ad blockers (uBlock Origin, AdBlock Plus): Removes specific elements, hides ad spaces, more granular control
+
+For maximum ad blocking, use **both** together.
+</Info>
+
+## How Blocking Affects Different Services
+
+### Web Browsing
+
+**Ads & Trackers**:
+- ✅ Most ads removed
+- ✅ Tracking scripts blocked
+- ❌ First-party ads still show (e.g., Amazon product ads)
+- ❌ Empty spaces where ads were (use browser ad blocker to hide)
+
+**Malware**:
+- ✅ Phishing sites blocked
+- ✅ Malware distribution prevented
+- ✅ Protection against drive-by downloads
+
+### Mobile Apps
+
+**Ads in apps**:
+- ✅ Most in-app ads blocked
+- ✅ Works for all apps, not just browsers
+- ❌ Some apps may malfunction without ads
+- ❌ Apps that require ad networks may show errors
+
+### Social Media Blocking
+
+**Blocked**:
+- Cannot access social media websites
+- Apps cannot connect
+- Embedded social widgets fail
+
+**Side effects**:
+- "Sign in with Facebook" won't work
+- Social sharing buttons disabled
+- Comments sections using social logins unavailable
+
+## Combining Blockers
+
+### Recommended Combinations
+
+<Tabs>
+  <Tab title="Privacy-Focused">
+    Block ads, trackers, and malware:
+    ```bash
+    mullvad dns set default \
+      --block-ads \
+      --block-trackers \
+      --block-malware
+    ```
+    
+    **Benefits**: Enhanced privacy, security, faster browsing
+    **Trade-offs**: Some sites may detect ad blocking
+  </Tab>
+  
+  <Tab title="Family-Safe">
+    Privacy blockers + adult content + gambling:
+    ```bash
+    mullvad dns set default \
+      --block-ads \
+      --block-trackers \
+      --block-malware \
+      --block-adult-content \
+      --block-gambling
+    ```
+    
+    **Benefits**: Child-friendly environment
+    **Trade-offs**: May block legitimate content
+  </Tab>
+  
+  <Tab title="Productivity-Focused">
+    Malware + social media:
+    ```bash
+    mullvad dns set default \
+      --block-malware \
+      --block-social-media
+    ```
+    
+    **Benefits**: Eliminate social media distractions
+    **Trade-offs**: Cannot access social networks even when needed
+  </Tab>
+  
+  <Tab title="Security-Only">
+    Only malware blocking:
+    ```bash
+    mullvad dns set default --block-malware
+    ```
+    
+    **Benefits**: Protection without affecting browsing
+    **Trade-offs**: Ads and tracking remain
+  </Tab>
+</Tabs>
+
+## Compatibility
+
+Content blockers work with:
+
+- ✅ [WireGuard protocol](/features/wireguard)
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [Multihop](/features/multihop)
+- ✅ [DAITA](/features/daita)
+- ✅ [Obfuscation protocols](/features/obfuscation)
+- ✅ [Custom DNS](/features/custom-dns)* (see note below)
+- ✅ [Split tunneling](/features/split-tunneling)
+- ✅ [Local network access](/features/local-network-access)
+
+<Warning>
+**Content blockers require Mullvad's default DNS**. If you enable custom DNS, content blockers are automatically disabled because your custom DNS provider handles DNS resolution.
+</Warning>
+
+## Performance Impact
+
+Content blocking has minimal performance overhead:
+
+### Benefits
+
+- **Faster page loading**: No time spent loading ads
+- **Reduced bandwidth**: Less data transferred
+- **Lower CPU usage**: Fewer scripts to execute
+- **Better battery life**: Especially on mobile devices
+
+### Overhead
+
+- **DNS lookup**: Negligible (&lt;1ms additional processing)
+- **Blocklist updates**: Automatic, transparent
+- **Memory usage**: Minimal (blocklists on DNS server)
+
+<Info>
+In practice, content blocking **improves** performance by preventing unnecessary connections and downloads.
+</Info>
+
+## Troubleshooting
+
+### Website or Service Not Working
+
+If a website malfunctions with blockers enabled:
+
+1. **Identify the issue**: Check browser console for blocked requests
+
+2. **Test by disabling blockers**:
+   ```bash
+   # Disable all blockers temporarily
+   mullvad dns set default
+   
+   # Test if site works
+   # Then re-enable blockers
+   mullvad dns set default --block-ads --block-trackers --block-malware
+   ```
+
+3. **Disable specific blocker**:
+   ```bash
+   # Example: Disable ad blocking but keep others
+   mullvad dns set default --block-trackers --block-malware
+   ```
+
+4. **Use browser exceptions**: Some browser ad blockers allow site-specific whitelisting
+
+### Ads Still Appearing
+
+If you still see ads:
+
+1. **Clear DNS cache** (see below)
+
+2. **Check blocker status**:
+   ```bash
+   mullvad dns get
+   ```
+
+3. **Verify default DNS is active**: Ensure not using custom DNS
+
+4. **First-party ads**: These cannot be blocked by DNS (use browser ad blocker)
+
+5. **Test blocking**:
+   ```bash
+   # Should return 0.0.0.0 or NXDOMAIN
+   nslookup doubleclick.net
+   nslookup ads.google.com
+   ```
+
+### Clearing DNS Cache
+
+After changing blockers, clear your DNS cache:
+
+<Tabs>
+  <Tab title="Windows">
+    ```bash
+    ipconfig /flushdns
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    sudo dscacheutil -flushcache
+    sudo killall -HUP mDNSResponder
+    ```
+  </Tab>
+  
+  <Tab title="Linux">
+    ```bash
+    # systemd-resolved
+    sudo systemd-resolve --flush-caches
+    
+    # dnsmasq
+    sudo killall -HUP dnsmasq
+    
+    # nscd
+    sudo systemctl restart nscd
+    ```
+  </Tab>
+  
+  <Tab title="Android">
+    Settings → Apps → Show system → Private DNS → Clear cache
+    
+    Or restart device.
+  </Tab>
+  
+  <Tab title="iOS">
+    Settings → General → Reset → Reset Network Settings
+    
+    (Note: This resets all network settings)
+  </Tab>
+</Tabs>
+
+Also clear **browser cache**:
+- Chrome: Settings → Privacy and security → Clear browsing data
+- Firefox: Settings → Privacy & Security → Clear Data
+- Safari: Preferences → Privacy → Manage Website Data → Remove All
+
+### Social Media Login Issues
+
+If social login ("Sign in with Facebook") fails:
+
+1. **Temporarily disable social media blocker**:
+   ```bash
+   # Keep other blockers active
+   mullvad dns set default --block-ads --block-trackers --block-malware
+   ```
+
+2. **Complete login**
+
+3. **Re-enable social media blocker** (if desired):
+   ```bash
+   mullvad dns set default \
+     --block-ads \
+     --block-trackers \
+     --block-malware \
+     --block-social-media
+   ```
+
+### Legitimate Sites Blocked
+
+If a legitimate website is blocked:
+
+1. **False positive**: Blocklists occasionally block legitimate domains
+
+2. **Disable blocker temporarily**:
+   ```bash
+   # Disable specific blocker
+   mullvad dns set default --block-trackers --block-malware
+   # (removed --block-ads in this example)
+   ```
+
+3. **Report false positive**: Contact Mullvad support with domain details
+
+4. **Use custom DNS**: Switch to unfiltered DNS if needed
+   ```bash
+   mullvad dns set custom 1.1.1.1
+   ```
+
+## Comparison with Other Solutions
+
+### DNS-Based Blocking (Mullvad Content Blockers)
+
+**Pros**:
+- System-wide (all apps)
+- No additional software
+- Blocks tracking in all apps
+- Low resource usage
+- Works on mobile
+
+**Cons**:
+- Cannot block first-party ads
+- No cosmetic filtering
+- All-or-nothing per domain
+
+### Browser Extensions (uBlock Origin, AdBlock Plus)
+
+**Pros**:
+- Granular URL/element blocking
+- Cosmetic filtering (hides ad spaces)
+- Can block first-party ads
+- Per-site whitelisting
+
+**Cons**:
+- Browser-only (doesn't block app ads)
+- Resource usage in browser
+- Must install in each browser
+- Not available on mobile browsers (limited)
+
+### Network-Wide Blockers (Pi-hole, AdGuard Home)
+
+**Pros**:
+- Blocks for all devices on network
+- Customizable blocklists
+- Detailed statistics
+- Full control
+
+**Cons**:
+- Requires separate device/server
+- Network configuration needed
+- Maintenance required
+
+<Info>
+**Best approach**: Combine multiple layers:
+1. Mullvad content blockers (system-wide, easy)
+2. Browser ad blocker (granular control)
+3. (Optional) Network-wide blocker (protect all devices)
+</Info>
+
+## Privacy Considerations
+
+### What Mullvad Sees
+
+With content blockers enabled:
+- **Mullvad sees**: DNS queries (e.g., "user queried doubleclick.net")
+- **Mullvad does NOT log**: DNS queries are not stored
+- **Blocklist matching**: Happens on DNS server (not logged)
+- **No personal data**: DNS queries are not associated with accounts
+
+<Note>
+Mullvad's no-logs policy applies to DNS queries. Content blocker usage does not compromise privacy.
+</Note>
+
+### Custom DNS vs. Mullvad DNS with Blockers
+
+If you use custom DNS:
+- Content blockers unavailable (custom DNS provider handles resolution)
+- Privacy depends on custom DNS provider's policy
+- May have own blocking features (e.g., Cloudflare for Families)
+
+With Mullvad DNS + blockers:
+- Mullvad's no-logs policy
+- Integrated blocking
+- No third-party DNS provider
+
+## Best Practices
+
+### Recommended Configuration
+
+For most users:
+
+```bash
+mullvad dns set default \
+  --block-ads \
+  --block-trackers \
+  --block-malware
+```
+
+**Why**:
+- Ads and trackers violate privacy
+- Malware blocking enhances security
+- Minimal disruption to legitimate services
+
+### Advanced Configuration
+
+For maximum filtering:
+
+```bash
+mullvad dns set default \
+  --block-ads \
+  --block-trackers \
+  --block-malware \
+  --block-adult-content \
+  --block-gambling \
+  --block-social-media
+```
+
+**Consider**:
+- May break some website features
+- Social logins won't work
+- Test critical services first
+
+### Testing Strategy
+
+1. **Start with minimal blocking**: Only malware
+2. **Add ads and trackers**: Evaluate browsing experience
+3. **Add optional blockers**: If needed for specific use cases
+4. **Document issues**: Note which sites require unblocking
+5. **Adjust as needed**: Find balance between blocking and functionality
+
+## Related Features
+
+- [Custom DNS](/features/custom-dns) - Configure DNS settings and blockers
+- [Split Tunneling](/features/split-tunneling) - DNS behavior with excluded apps
+- [WireGuard Protocol](/features/wireguard) - Base VPN protocol
+- [Local Network Access](/features/local-network-access) - LAN connectivity settings
+
+## Technical Details
+
+### Implementation
+
+From source code (mullvad-types/src/settings/dns.rs:22-31):
+
+```rust
+pub struct DefaultDnsOptions {
+    pub block_ads: bool,
+    pub block_trackers: bool,
+    pub block_malware: bool,
+    pub block_adult_content: bool,
+    pub block_gambling: bool,
+    pub block_social_media: bool,
+}
+```
+
+Blockers are boolean flags sent to Mullvad DNS servers, which apply filtering based on enabled options.
+
+### Blocklist Updates
+
+- **Automatic**: Mullvad updates blocklists server-side
+- **No client action**: Devices automatically get updated blocking
+- **Frequency**: Regular updates (daily/weekly)
+- **Sources**: Reputable threat intelligence and filter lists
+
+## Further Reading
+
+- [Mullvad DNS Documentation](https://mullvad.net/en/help/dns-leaks/)
+- [DNS-Based Content Filtering](https://en.wikipedia.org/wiki/DNS_blocking)
+- [Browser Privacy Tools](https://mullvad.net/en/help/tag/privacy/)

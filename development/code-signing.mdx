@@ -1,0 +1,115 @@
+---
+title: Code Signing Requirements
+description: Git commit signing requirements for Mullvad VPN app development
+---
+
+The Mullvad VPN app has strict code signing requirements to ensure the security and integrity of the codebase. All changes must follow these signing policies.
+
+## Git Signatures Overview
+
+All merge commits to the main branch must be PGP (gpg) signed in git. This signs off the entire feature branch.
+
+<Info>
+Individual commits in feature branches do not need to be signed, unless they change one or more of the files deemed extra important (see below).
+</Info>
+
+## Merge Commit Requirements
+
+### Standard Feature Branches
+
+- All merge commits to `main` must be PGP signed
+- The signature signs off the entire feature branch
+- Individual commits in the feature branch do not require signatures (with exceptions)
+
+### Files Requiring Signatures on Every Commit
+
+Certain files are deemed security-critical and require signatures on **every commit** that changes them, not just merge commits.
+
+The list of files requiring signatures to every commit that changes them is defined in the [`verify-locked-down-signatures`](https://github.com/mullvad/mullvadvpn-app/blob/main/.github/workflows/verify-locked-down-signatures.yml) workflow.
+
+<Warning>
+Any commit that modifies these protected files must be individually signed, even if it's part of a feature branch that will be signed at merge time.
+</Warning>
+
+## Developer Keys
+
+Mullvad signs every merge commit to the `main` branch as well as release tags. If you would like to verify checkouts or releases, you can find our developer keys on [Mullvad's Open Source page](https://mullvad.net/en/guides/open-source/).
+
+The Open Source page includes:
+- PGP keys for all Mullvad developers
+- Instructions for cryptographic verification
+- Code signing keys for release verification
+
+## Binaries Submodule
+
+The repository has a git submodule at `dist-assets/binaries` that contains binaries and build scripts for third party code bundled with the app (such as Wintun).
+
+<Info>
+This submodule conforms to the same integrity/security standards as the main repository:
+- Every merge commit must be signed
+- The main repository should only ever point to a signed merge commit of the binaries submodule
+</Info>
+
+See the [binaries submodule](https://github.com/mullvad/mullvadvpn-app-binaries) README for more details.
+
+## Setting Up PGP Signing
+
+### Generate a PGP Key
+
+If you don't already have a PGP key:
+
+```bash
+gpg --full-generate-key
+```
+
+Choose RSA and RSA, 4096 bits, and set an appropriate expiration date.
+
+### Configure Git to Sign Commits
+
+Tell git to use your PGP key:
+
+```bash
+# List your keys to find the key ID
+gpg --list-secret-keys --keyid-format=long
+
+# Configure git to use your key
+git config --global user.signingkey YOUR_KEY_ID
+
+# Enable signing by default
+git config --global commit.gpgsign true
+```
+
+### Sign a Merge Commit
+
+When merging a pull request:
+
+```bash
+git merge --no-ff -S feature-branch
+```
+
+The `-S` flag ensures the merge commit is signed.
+
+## Verification
+
+To verify signed commits:
+
+```bash
+# Verify the last commit
+git verify-commit HEAD
+
+# Show signature information
+git log --show-signature -1
+```
+
+## OpenSSF Best Practices
+
+The Mullvad VPN app follows the OpenSSF (Open Source Security Foundation) Best Practices and has achieved the OpenSSF Best Practices badge.
+
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/9411/badge)](https://www.bestpractices.dev/projects/9411)
+
+This certification demonstrates our commitment to:
+- Secure development practices
+- Vulnerability disclosure processes
+- Code signing and verification
+- Regular security audits
+- Transparent security policies

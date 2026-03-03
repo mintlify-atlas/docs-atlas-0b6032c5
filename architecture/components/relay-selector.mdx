@@ -1,0 +1,539 @@
+---
+title: Relay Selector
+description: The relay selection algorithm that chooses optimal VPN servers based on user constraints
+---
+
+## Overview
+
+The relay selector is responsible for choosing one or more Mullvad VPN relays from the available relay list, taking into account user-configurable criteria, availability, and connection requirements. It implements intelligent fallback strategies and supports advanced features like DAITA and multihop.
+
+Reference: `mullvad-relay-selector/src/relay_selector.rs`, `docs/relay-selector.md`
+
+## Core Concepts
+
+### Glossary
+
+- **Relay**: A server that provides one or multiple tunnel endpoints, with an associated weight
+- **Endpoint**: A combination of socket address and transport protocol
+- **Transport Protocol**: TCP or UDP
+- **Obfuscation**: Wrapping VPN traffic in protocols designed to circumvent censorship
+- **DAITA**: Defense Against AI-guided Traffic Analysis - makes website fingerprinting harder
+- **Multihop**: Routing traffic through two relays instead of one for enhanced privacy
+
+Reference: `docs/relay-selector.md:1-16`
+
+## Selection Process
+
+The relay selector operates in multiple phases:
+
+### 1. Constraint Application
+
+Filter relays based on user-specified criteria:
+
+- **Location constraints**: Country, city, or specific hostname
+- **Provider constraints**: Filter by hosting provider
+- **Ownership constraints**: Mullvad-owned vs rented servers
+- **Protocol constraints**: WireGuard port and IP version
+- **Feature requirements**: DAITA, multihop, obfuscation
+
+Reference: `docs/relay-selector.md:32-44`
+
+### 2. Filtering Process
+
+The selector iterates through each relay in the relay list:
+
+1. Remove relays that don't match location constraints
+2. Filter out relays not meeting protocol requirements
+3. Eliminate relays without required features (DAITA, etc.)
+4. Remove inactive/offline relays
+5. Filter by provider and ownership if specified
+
+The result is a list of matching relays with compatible endpoints.
+
+Reference: `docs/relay-selector.md:26-30`
+
+### 3. Relay Selection
+
+From the filtered set, select a single relay using **roulette wheel selection**:
+
+- Each relay has an assigned weight (from relay list)
+- Higher weight = higher probability of selection
+- This provides load balancing while respecting server capacity
+- Once a relay is chosen, randomly select a matching endpoint
+
+Reference: `docs/relay-selector.md:82-87`
+
+### 4. Endpoint Selection
+
+After selecting a relay, choose a specific endpoint:
+
+- Filter endpoints by protocol (TCP/UDP)
+- Filter by port constraints
+- Filter by IP version (IPv4/IPv6)
+- Randomly select from remaining endpoints
+
+## Default Constraints
+
+When users don't specify explicit constraints, the selector applies progressive fallback strategies to maximize connection success.
+
+### Desktop Default Strategy
+
+1. **First attempt**: Random port, IPv4, no obfuscation
+2. **Second attempt**: Random port, IPv6 (if available on host)
+3. **Third attempt**: Shadowsocks obfuscation, random port
+4. **Fourth attempt**: QUIC obfuscation, port 443
+5. **Fifth attempt**: UDP2TCP obfuscation, random port (80, 443, or 5001)
+6. **Sixth attempt**: UDP2TCP over IPv6 (if available)
+7. **Seventh attempt**: LWO (Lightweight WireGuard Obfuscation)
+
+Reference: `docs/relay-selector.md:45-52`
+
+### iOS Default Strategy
+
+iOS doesn't support IPv6 connections, so the strategy is simplified:
+
+1. **First attempt**: Random port, IPv4
+2. **Second attempt**: Shadowsocks obfuscation, random port
+3. **Third attempt**: QUIC obfuscation, port 443
+4. **Fourth attempt**: UDP2TCP obfuscation, port 443 or 80
+
+Reference: `docs/relay-selector.md:54-62`
+
+### Obfuscation Ports
+
+- **UDP2TCP**: Ports 80, 443, or 5001 (desktop); 80 or 443 (iOS)
+- **Shadowsocks**: Random port from relay-defined range
+- **QUIC**: Port 443
+- **LWO**: Standard WireGuard ports
+
+Reference: `docs/relay-selector.md:64-73`
+
+### Retry Behavior
+
+If no tunnel is established after exhausting all attempts, the selector loops back to the first constraint and continues trying. This ensures persistent connection attempts with varying configurations.
+
+Reference: `docs/relay-selector.md:75-80`
+
+## DAITA-Compatible Selection
+
+DAITA (Defense Against AI-guided Traffic Analysis) is not available on all relays, requiring special handling.
+
+### Automatic Multihop
+
+When DAITA is enabled but the desired exit relay doesn't support it:
+
+1. Selector finds a DAITA-compatible entry relay
+2. Implicitly configures multihop connection
+3. Entry relay provides DAITA functionality
+4. Exit relay honors user's location constraint
+
+This provides seamless DAITA usage without explicit multihop configuration.
+
+Reference: `docs/relay-selector.md:89-94`
+
+### Direct-Only Mode
+
+Users can disable automatic multihop with "Direct only" setting:
+
+- Only selects relays that directly support DAITA
+- No implicit multihop configuration
+- May result in fewer available relays
+
+Reference: `docs/relay-selector.md:96-97`
+
+## Multihop Configuration
+
+Multihop routes traffic through two relays for enhanced privacy.
+
+### Selecting Entry and Exit
+
+When multihop is enabled:
+
+1. **Exit relay selection**: Apply user's location/provider constraints
+2. **Entry relay selection**: Apply entry-specific constraints
+3. **Conflict prevention**: Ensure entry ≠ exit relay
+4. **Compatibility check**: Verify protocol compatibility between hops
+
+Both relays must support the required features and protocols.
+
+### Multihop with DAITA
+
+When using DAITA with multihop, the entry relay must support DAITA since it's the first hop handling the user's traffic.
+
+Reference: `docs/relay-selector.md:92-94`
+
+## Constraint Types
+
+### Location Constraints
+
+```protobuf
+message LocationConstraint {
+  oneof type {
+    string custom_list = 1;
+    GeographicLocationConstraint location = 2;
+  }
+}
+
+message GeographicLocationConstraint {
+  string country = 1;
+  optional string city = 2;
+  optional string hostname = 3;
+}
+```
+
+**Examples:**
+- Country only: `{ country: "se" }` (any Swedish relay)
+- City: `{ country: "se", city: "got" }` (Gothenburg, Sweden)
+- Hostname: `{ country: "se", city: "got", hostname: "se-got-wg-001" }` (specific relay)
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:402-413`
+
+### WireGuard Constraints
+
+```protobuf
+message WireguardConstraints {
+  optional IpVersion ip_version = 2;
+  repeated string allowed_ips = 3;
+  bool use_multihop = 4;
+  LocationConstraint entry_location = 5;
+  repeated string entry_providers = 6;
+  Ownership entry_ownership = 7;
+}
+```
+
+**Configures:**
+- IP version (IPv4/IPv6)
+- Allowed IPs (routing)
+- Multihop enable/disable
+- Entry relay constraints (for multihop)
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:575-582`
+
+### Obfuscation Constraints
+
+```protobuf
+message ObfuscationSettings {
+  enum SelectedObfuscation {
+    AUTO = 0;
+    OFF = 1;
+    WIREGUARD_PORT = 2;
+    UDP2TCP = 3;
+    SHADOWSOCKS = 4;
+    QUIC = 5;
+    LWO = 6;
+  }
+  message Udp2TcpObfuscation { optional uint32 port = 1; }
+  message Shadowsocks { optional uint32 port = 1; }
+  message WireguardPort { optional uint32 port = 1; }
+  
+  SelectedObfuscation selected_obfuscation = 1;
+  Udp2TcpObfuscation udp2tcp = 2;
+  Shadowsocks shadowsocks = 3;
+  WireguardPort wireguard_port = 4;
+}
+```
+
+**Modes:**
+- `AUTO`: Use default obfuscation strategy
+- `OFF`: No obfuscation
+- `WIREGUARD_PORT`: Specific WireGuard port
+- `UDP2TCP`, `SHADOWSOCKS`, `QUIC`, `LWO`: Specific obfuscation method
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:415-433`
+
+## Custom Lists
+
+Users can create named collections of relay locations for quick access:
+
+```protobuf
+message CustomList {
+  string id = 1;
+  string name = 2;
+  repeated GeographicLocationConstraint locations = 3;
+}
+```
+
+**Example use case:**
+- "Low latency": Nearby cities
+- "Streaming": Specific countries
+- "Trusted providers": Mullvad-owned relays only
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:435-439`
+
+## Relay List Structure
+
+### Relay Definition
+
+```protobuf
+message Relay {
+  message WireguardEndpoint {
+    bytes public_key = 1;
+    bool daita = 2;
+    Quic quic = 3;
+    repeated string shadowsocks_extra_addr_in = 4;
+    bool lwo = 5;
+  }
+
+  string hostname = 1;
+  string ipv4_addr_in = 2;
+  optional string ipv6_addr_in = 3;
+  bool include_in_country = 4;
+  bool active = 5;
+  bool owned = 6;
+  string provider = 7;
+  fixed64 weight = 8;
+  WireguardEndpoint endpoint_data = 9;
+  Location location = 10;
+}
+```
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:689-713`
+
+### Endpoint Data
+
+Shared configuration for all WireGuard relays:
+
+```protobuf
+message WireguardEndpointData {
+  repeated PortRange port_ranges = 1;
+  string ipv4_gateway = 2;
+  string ipv6_gateway = 3;
+  repeated PortRange shadowsocks_port_ranges = 4;
+  repeated uint32 udp2tcp_ports = 5;
+}
+```
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:774-780`
+
+## Implementation Details
+
+### Weighted Random Selection
+
+The roulette wheel selection algorithm:
+
+```rust
+// Simplified implementation concept
+fn select_relay(relays: &[Relay]) -> &Relay {
+    let total_weight: u64 = relays.iter().map(|r| r.weight).sum();
+    let random_value = random_range(0..total_weight);
+    
+    let mut cumulative_weight = 0;
+    for relay in relays {
+        cumulative_weight += relay.weight;
+        if random_value < cumulative_weight {
+            return relay;
+        }
+    }
+    unreachable!()
+}
+```
+
+Reference: `mullvad-relay-selector/src/relay_selector.rs`
+
+### Constraint Compatibility
+
+Default constraints are filtered by user constraints:
+
+- If user specifies UDP-only, IPv6 attempts are skipped
+- If user disables obfuscation, obfuscation attempts are skipped
+- If user selects specific port, all random port attempts use that port
+
+This ensures user preferences are always respected while maximizing connection success.
+
+## Relay Selector Service
+
+A separate gRPC service provides relay selection analysis:
+
+```protobuf
+service RelaySelectorService {
+  // Partition relays into matching and non-matching sets
+  rpc PartitionRelays(Predicate) returns (RelayPartitions);
+}
+```
+
+Reference: `mullvad-management-interface/proto/relay_selector.proto:11-22`
+
+### Predicate Types
+
+```protobuf
+message Predicate {
+  oneof context {
+    EntryConstraints singlehop = 1;
+    EntryConstraints autohop = 2;
+    MultiHopConstraints entry = 3;
+    MultiHopConstraints exit = 4;
+  }
+}
+```
+
+**Contexts:**
+- `singlehop`: Direct relay connection
+- `autohop`: Automatic multihop when needed (e.g., for DAITA)
+- `entry`: Entry relay for explicit multihop
+- `exit`: Exit relay for multihop
+
+Reference: `relay_selector.proto:24-45`
+
+### Relay Partitions
+
+The service returns two sets:
+
+```protobuf
+message RelayPartitions {
+  repeated Relay matches = 1;
+  repeated DiscardedRelay discards = 2;
+}
+
+message DiscardedRelay {
+  Relay relay = 1;
+  IncompatibleConstraints why = 2;
+}
+```
+
+**Matches**: Relays that satisfy all constraints
+**Discards**: Relays that don't match, with reasons why
+
+This allows UIs to show:
+- Available relays for current settings
+- Why certain relays are unavailable
+- What constraints need changing to access specific relays
+
+Reference: `relay_selector.proto:74-103`
+
+### Incompatible Constraints
+
+```protobuf
+message IncompatibleConstraints {
+  bool inactive = 1;                  // Relay is offline
+  bool location = 2;                  // Wrong location
+  bool providers = 3;                 // Wrong provider
+  bool ownership = 4;                 // Ownership mismatch
+  bool ip_version = 5;                // IP version unavailable
+  bool daita = 6;                     // DAITA not supported
+  bool obfuscation = 7;               // Obfuscation unavailable
+  bool port = 8;                      // Requested port unavailable
+  bool conflict_with_other_hop = 9;   // Already used in multihop
+}
+```
+
+Reference: `relay_selector.proto:105-129`
+
+## Edge Cases and Special Handling
+
+### No Matching Relays
+
+When no relays match constraints:
+
+1. Error state entered with `NO_MATCHING_RELAY` cause
+2. Firewall blocks all traffic (security guarantee)
+3. User must adjust constraints or wait for relay list update
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:238-245`
+
+### Relay List Updates
+
+The relay list is periodically updated from the API:
+
+- Automatic background updates
+- Manual refresh via `UpdateRelayLocations` RPC
+- Cached locally to work offline
+- Selection reevaluates on each connection attempt
+
+Reference: `mullvad-daemon/src/relay_list/`
+
+### Offline Relays
+
+Relays can be marked inactive in the relay list:
+
+- Inactive relays are filtered out during selection
+- Temporary outages handled automatically
+- No user intervention required
+
+### IPv6 Availability
+
+IPv6 selection depends on host configuration:
+
+- Selector checks if host has IPv6 connectivity
+- IPv6 attempts skipped if unavailable
+- Prevents connection failures due to missing IPv6
+
+## Recent Relays
+
+The system tracks recently used relay configurations:
+
+```protobuf
+message Recents {
+  repeated Recent recents = 1;
+}
+
+message Recent {
+  oneof type {
+    LocationConstraint singlehop = 1;
+    MultihopRecent multihop = 2;
+  }
+}
+```
+
+Allows quick reconnection to previously successful configurations.
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:532-544`
+
+## Performance Considerations
+
+### Caching
+
+- Relay list cached in memory
+- Filtered results not cached (recomputed on demand)
+- Ensures fresh selections on each connection
+
+### Selection Speed
+
+Relay selection is fast:
+
+- Linear scan of relay list (typically &lt;1000 relays)
+- Simple constraint matching
+- Completes in milliseconds
+
+### Load Balancing
+
+Weighted selection distributes load:
+
+- High-capacity servers have higher weights
+- Prevents overloading individual relays
+- Provides good geographic distribution
+
+## Testing and Debugging
+
+### Relay Override
+
+For testing, specific relays can be forced:
+
+```protobuf
+message RelayOverride {
+  string hostname = 1;
+  optional string ipv4_addr_in = 2;
+  optional string ipv6_addr_in = 3;
+}
+```
+
+Overrides bypass normal selection logic.
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:526-530`
+
+### Disable/Enable Relays
+
+Individual relays can be disabled for testing:
+
+```protobuf
+rpc DisableRelay(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc EnableRelay(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+```
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:138-139`
+
+## Related Documentation
+
+- [Mullvad vs Talpid Layers](/architecture/components/mullvad-vs-talpid)
+- [Management Interface](/architecture/components/management-interface)
+- [API Communication](/architecture/components/api-communication)
+- [Relay Selection Documentation](/docs/relay-selector.md) (source repository)

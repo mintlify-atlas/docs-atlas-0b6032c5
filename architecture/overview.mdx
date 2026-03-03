@@ -1,0 +1,172 @@
+---
+title: 'Architecture Overview'
+description: 'High-level architecture of the Mullvad VPN application'
+---
+
+# Architecture Overview
+
+The Mullvad VPN application is a privacy-focused VPN client built with a security-first architecture. The application consists of multiple layers and components designed to maintain strict security guarantees while providing seamless user experience across desktop and mobile platforms.
+
+## High-Level Components
+
+The Mullvad VPN application is structured into two primary layers:
+
+### Mullvad Layer
+The Mullvad layer contains application-specific business logic:
+- Account and device management
+- Relay selection and constraints
+- API communication (api.mullvad.net)
+- Settings persistence
+- Management interface for frontend communication
+
+### Talpid Layer
+Talpid is the generic VPN tunnel management layer that provides:
+- Tunnel state machine
+- Firewall integration
+- DNS management
+- Routing configuration
+- Split tunneling support
+- Platform-specific implementations
+
+The distinction exists to separate generic VPN functionality (Talpid) from Mullvad-specific features, enabling potential reuse and clearer architectural boundaries.
+
+## System Architecture
+
+The application follows a client-server architecture with the daemon as the core component:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Frontends                          │
+│  ┌──────────┐  ┌─────────┐  ┌─────┐  ┌──────────────┐ │
+│  │ Electron │  │ Android │  │ iOS │  │     CLI      │ │
+│  └────┬─────┘  └────┬────┘  └──┬──┘  └──────┬───────┘ │
+└───────┼─────────────┼──────────┼─────────────┼─────────┘
+        │ gRPC/       │ JNI      │ WG Kit      │ gRPC
+        │ Socket      │          │ Comms       │
+        ▼             ▼          ▼             ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Mullvad Daemon                       │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │          Management Interface (gRPC)              │ │
+│  └───────────────────────────────────────────────────┘ │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐│
+│  │ Account  │  │  Device  │  │    Relay Selector    ││
+│  │ Manager  │  │ Manager  │  │                      ││
+│  └──────────┘  └──────────┘  └──────────────────────┘│
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │            Tunnel State Machine                  │ │
+│  │              (Talpid Core)                       │ │
+│  └──────────────────────────────────────────────────┘ │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────────┐  │
+│  │ Firewall │  │   DNS    │  │  Route Manager     │  │
+│  └──────────┘  └──────────┘  └────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌─────────────────────────────────────────────────────────┐
+│              Operating System Network Stack             │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Key Architectural Principles
+
+### Actor-Based Asynchronous Design
+The daemon uses an actor system built on Tokio to handle multiple concurrent operations:
+- Non-blocking message processing
+- Concurrent API requests
+- Asynchronous state transitions
+- Multiple frontend client support
+
+This design ensures that no single operation can block the entire daemon, maintaining responsiveness even under heavy load.
+
+### Security-First State Management
+The tunnel state machine enforces strict security policies:
+- No data leaks between states
+- Firewall rules applied before tunnel establishment
+- Blocking states prevent unprotected traffic
+- Fail-secure error handling
+
+### Platform Abstraction
+Platform-specific code is isolated in dedicated modules:
+- `talpid-windows`: Windows-specific implementations
+- `talpid-macos`: macOS-specific implementations
+- `talpid-routing`: Cross-platform routing with platform backends
+- Android and iOS have their own native integration layers
+
+## Workspace Structure
+
+The codebase is organized as a Cargo workspace with the following key crates:
+
+### Core Daemon Components
+- **mullvad-daemon**: Main daemon process and orchestration
+- **mullvad-management-interface**: gRPC interface definitions
+- **mullvad-cli**: Command-line interface client
+- **talpid-core**: Tunnel state machine and core VPN logic
+
+### Platform Integration
+- **mullvad-jni**: Android JNI bindings
+- **mullvad-ios**: iOS integration layer
+- **desktop/**: Electron desktop application
+
+### Networking Components
+- **talpid-tunnel**: Tunnel creation and management (WireGuard, OpenVPN)
+- **talpid-wireguard**: WireGuard-specific implementation
+- **talpid-routing**: System routing table management
+- **talpid-dns**: DNS configuration and monitoring
+
+### Auxiliary Services
+- **mullvad-api**: REST API client for Mullvad services
+- **mullvad-relay-selector**: Relay selection algorithm
+- **mullvad-encrypted-dns-proxy**: DNS-over-HTTPS proxy
+- **tunnel-obfuscation**: Traffic obfuscation (Shadowsocks, UDP-over-TCP)
+
+### Security & Configuration
+- **mullvad-types**: Shared type definitions
+- **mullvad-fs**: Secure filesystem operations
+- **mullvad-leak-checker**: Connection leak detection
+
+## Communication Patterns
+
+### Frontend to Daemon
+- **Desktop (Electron/CLI)**: gRPC over Unix domain socket (Unix) or named pipe (Windows)
+- **Android**: JNI (Java Native Interface) calls from Java/Kotlin to Rust daemon
+- **iOS**: Uses WireGuard-kit with custom integration layer
+
+### Daemon to API
+- REST over HTTPS to api.mullvad.net
+- Optional Shadowsocks proxying for censorship resistance
+- Connection pooling and retry logic
+- Non-blocking concurrent requests
+
+### Internal Actor Communication
+- Message passing via Tokio channels
+- Command/response pattern for synchronous-style interactions
+- Event streams for state change notifications
+- Careful deadlock avoidance through async design
+
+## Data Flow Example
+
+When a user initiates a VPN connection:
+
+1. **Frontend** sends `ConnectTunnel` command via gRPC/JNI
+2. **Management Interface** receives command and forwards to daemon
+3. **Daemon** requests relay from **Relay Selector**
+4. **Tunnel State Machine** transitions from `Disconnected` → `Connecting`
+5. **Firewall** applies blocking rules before tunnel establishment
+6. **Route Manager** configures system routing tables
+7. **DNS Manager** sets up secure DNS configuration
+8. **Tunnel** establishes WireGuard connection to selected relay
+9. **Tunnel Monitor** verifies connectivity
+10. **State Machine** transitions to `Connected` state
+11. **Frontend** receives state update notification and displays connected status
+
+## Related Documentation
+
+- [Daemon Architecture](/architecture/daemon) - Detailed daemon internals
+- [Frontend Architectures](/architecture/frontends) - Platform-specific frontend implementations
+- [Tunnel State Machine](/architecture/tunnel-state-machine) - State management and transitions
+- [Security Model](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md) - Security guarantees and threat model
+- [Relay Selection](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/relay-selector.md) - Relay selection algorithm

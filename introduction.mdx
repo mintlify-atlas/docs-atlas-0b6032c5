@@ -1,0 +1,147 @@
+---
+title: Introduction to Mullvad VPN
+description: Privacy-focused VPN client application with quantum-resistant tunnels and advanced security features
+---
+
+## Welcome to Mullvad VPN
+
+Mullvad VPN is a privacy-preserving VPN client that goes to great lengths to stop traffic leaks. All security settings default to the most secure and private options, ensuring your internet traffic stays protected.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get connected to Mullvad VPN in minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Download and install on all platforms
+  </Card>
+  <Card
+    title="Security features"
+    icon="shield"
+    href="/essentials/security"
+  >
+    Learn about our security guarantees
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api-reference"
+  >
+    Integrate with our management interface
+  </Card>
+</CardGroup>
+
+## Core features
+
+Mullvad VPN provides advanced privacy and security features across all supported platforms.
+
+### Always-on kill switch
+
+The app includes an always-on kill switch that cannot be disabled. Whenever you change servers or temporarily lose tunnel connectivity, the app ensures no network traffic leaks out unencrypted. The firewall rules are applied atomically, meaning there is no time window where invalid rules are active.
+
+### Quantum-resistant tunnels
+
+All platforms support quantum-resistant tunnels using WireGuard with post-quantum key exchange. The app derives a pre-shared key (PSK) using a quantum-safe key encapsulation mechanism (KEM) with the relay, ensuring your connection is protected against future quantum computing threats.
+
+### DAITA (Defense Against AI-Guided Traffic Analysis)
+
+DAITA is available on Windows, Linux, macOS, and Android to defend against advanced traffic analysis attacks. This feature adds additional protection layers to prevent AI-guided traffic pattern recognition.
+
+### WireGuard protocol with advanced features
+
+<CardGroup cols={2}>
+  <Card title="Multihop" icon="network-wired">
+    Route your connection through two VPN servers for enhanced privacy
+  </Card>
+  <Card title="WireGuard over TCP" icon="exchange-alt">
+    Use TCP transport for better compatibility with restrictive networks
+  </Card>
+  <Card title="WireGuard over Shadowsocks" icon="mask">
+    Obfuscate your VPN traffic to bypass censorship
+  </Card>
+  <Card title="WireGuard over QUIC" icon="bolt">
+    Modern transport protocol for improved performance
+  </Card>
+</CardGroup>
+
+### Privacy features
+
+- **Custom DNS servers**: Use your own DNS servers or Mullvad's DNS with content blocking
+- **Content blockers**: Block ads, trackers, malware, and adult content at the DNS level
+- **Split tunneling**: Exclude specific apps from the VPN tunnel (Windows, Linux, macOS, Android)
+- **Local network access**: Optionally allow access to devices on your local network
+
+## Platform support
+
+Mullvad VPN officially supports the following operating systems:
+
+| Platform | Supported versions |
+|----------|-------------------|
+| Windows | 10 and 11 |
+| macOS | The three latest major releases |
+| Linux (Ubuntu) | The two latest LTS releases and latest non-LTS releases |
+| Linux (Fedora) | Versions not yet EOL |
+| Linux (Debian) | 12 and newer |
+| Android | 8 and newer |
+| iOS | 17.0 and newer |
+
+## App components
+
+The Mullvad VPN application consists of several key components:
+
+### Desktop platforms (Windows, macOS, Linux)
+
+- **mullvad-daemon**: System service that maintains VPN security and tunnel management
+- **Desktop GUI**: Electron-based graphical interface
+- **mullvad CLI**: Command-line interface for advanced users
+
+### Mobile platforms
+
+- **Android**: Native Android app using the VPN Service API
+- **iOS**: Native iOS app with dedicated packet tunnel implementation
+
+## Why Mullvad VPN?
+
+<AccordionGroup>
+  <Accordion title="No account required">
+    Mullvad uses account numbers instead of email addresses. You can create an account without providing any personal information.
+  </Accordion>
+  
+  <Accordion title="Externally audited">
+    All platform versions of the app have been externally audited by security experts and penetration testers. Audit results are always published in their unredacted original form.
+  </Accordion>
+  
+  <Accordion title="Open source">
+    The entire codebase is open source and available on GitHub. All merge commits to the main branch are PGP-signed for security.
+  </Accordion>
+  
+  <Accordion title="Fail closed, not open">
+    If the VPN tunnel fails, your traffic is blocked rather than sent unencrypted. The app prevents leaks via strict firewall rules.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Install Mullvad VPN"
+    icon="download"
+    href="/installation"
+  >
+    Download and install the app on your device
+  </Card>
+  <Card
+    title="Get started quickly"
+    icon="play"
+    href="/quickstart"
+  >
+    Complete setup from installation to first connection
+  </Card>
+</CardGroup>

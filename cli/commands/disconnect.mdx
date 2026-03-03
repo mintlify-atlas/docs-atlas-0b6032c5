@@ -1,0 +1,83 @@
+---
+title: "mullvad disconnect"
+description: "Disconnect from the VPN"
+---
+
+## Overview
+
+The `mullvad disconnect` command terminates the active VPN connection and returns your system to its normal networking state.
+
+## Syntax
+
+```bash
+mullvad disconnect [OPTIONS]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-w`, `--wait` | Wait until disconnected before exiting |
+| `-h`, `--help` | Print help information |
+
+## Behavior
+
+When you run `mullvad disconnect`:
+
+1. The command sends a disconnect request to the Mullvad daemon
+2. The VPN tunnel is torn down
+3. Your system returns to using regular network connections
+4. If [lockdown mode](/cli/commands/lockdown) is disabled, normal internet access resumes
+
+## Examples
+
+### Basic Disconnect
+
+Disconnect from the VPN without waiting:
+
+```bash
+mullvad disconnect
+```
+
+The command returns immediately, and the disconnection process continues in the background.
+
+### Wait for Disconnection
+
+Disconnect and wait until fully disconnected:
+
+```bash
+mullvad disconnect --wait
+```
+
+This blocks until the tunnel state changes to "Disconnected". The command prints tunnel state updates during the disconnection process.
+
+### Disconnect with Short Option
+
+```bash
+mullvad disconnect -w
+```
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect to a VPN relay
+- [status](/cli/commands/status) - Check current connection status
+- [lockdown](/cli/commands/lockdown) - Configure network blocking when disconnected
+- [auto-connect](/cli/commands/auto-connect) - Control automatic connection on startup
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Disconnect initiated successfully (or completed if `--wait` used) |
+| 1 | Failed to disconnect |
+
+## Notes
+
+- If lockdown mode is enabled, network traffic will remain blocked even after disconnecting
+- The disconnect command records the reason as "mullvad disconnect" in daemon logs
+- Auto-connect settings are not affected by manual disconnection
+- To prevent automatic reconnection, see [auto-connect](/cli/commands/auto-connect)
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/tunnel_state.rs:33`

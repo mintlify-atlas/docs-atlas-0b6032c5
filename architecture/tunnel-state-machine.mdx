@@ -1,0 +1,529 @@
+---
+title: 'Tunnel State Machine'
+description: 'Detailed explanation of the tunnel state machine states and transitions'
+---
+
+# Tunnel State Machine
+
+The tunnel state machine (TSM) is the core component of Talpid that coordinates the lifecycle of VPN tunnel connections. It enforces security policies, manages system configuration, and ensures that no traffic leaks outside the tunnel when a secure connection is requested.
+
+## Security Philosophy
+
+The tunnel state machine is designed with a **fail-secure** approach:
+
+- Security policies are applied **before** establishing a connection
+- Errors result in blocking states that prevent traffic leaks
+- System configuration is restored when disconnecting
+- State transitions are atomic and carefully ordered
+- The machine never allows unprotected traffic when user requested a secure connection
+
+This design upholds the security guarantees documented in the [security model](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md).
+
+## State Diagram
+
+The tunnel state machine has five primary states:
+
+```
+                +--------------+   Request to connect    +------------+
+  Start ------->| Disconnected +------------------------>| Connecting |
+                +--------------+                         +----+--+--+-+
+                    ^                                      ^  |  ^  |
+                    |           Will attempt to reconnect  |  |  |  |
+                    |   .----------------------------------'  |  |  |
+                    |   |                                     |  |  |
+                    |   |                   .-----------------'  |  |
+                    |   |                   | Unrecoverable      |  |
+                    |   |                   |     error          |  |
+                    |   |    Request to     V                    |  |
+ System is restored |   |    disconnect +-------+                |  | Connection is configured
+   to its initial   |   |   .-----------+ Error +----------------'  |       and working
+    configuration   |   |   |           +-------+  Request to       |
+                    |   |   |               ^       connect         |
+                    |   |   |               |                       |
+                    |   |   |  .------------'                       |
+                    |   |   |  | Unrecoverable                      |
+                    |   |   |  |  error while                       |
+                    |   |   |  |  in connected                      |
+                    |   |   V  |     state                          V
+                 +--+---+------+-+                         +-----------+
+                 | Disconnecting |<------------------------+ Connected |
+                 +---------------+  Request to disconnect  +-----------+
+                                      or unrecoverable
+                                           error
+```
+
+## State Descriptions
+
+### Disconnected
+
+**Description**: Initial and final resting state. The system is in its normal configuration with no VPN active.
+
+**Characteristics**:
+- No tunnel is active
+- No security policies applied (unless lockdown mode enabled)
+- System DNS, routing, and firewall are in default state
+- No changes to the operating system
+
+**When lockdown mode is enabled**:
+- Firewall blocks all traffic even in disconnected state
+- Only exception: API endpoint for logging in and updating relay list
+
+**Transitions from this state**:
+- → **Connecting**: When user requests connection or auto-connect triggers
+
+### Connecting
+
+**Description**: Actively establishing a VPN tunnel. Security policies are applied to prevent leaks during connection setup.
+
+**What happens on entry**:
+1. **Firewall rules applied** - Block all traffic except:
+   - VPN server endpoint
+   - DHCP (if needed)
+   - LAN traffic (if allow LAN enabled)
+2. **DNS configuration** - Set to Mullvad DNS or custom DNS
+3. **Routing tables** - Prepare routes for tunnel
+4. **Tunnel creation** - Start WireGuard or OpenVPN process
+5. **Parameter generation** - Generate tunnel parameters:
+   - Select relay server
+   - Generate ephemeral keys (if quantum-resistant)
+   - Configure obfuscation (if needed)
+6. **Connection establishment** - Connect to selected relay
+7. **Connectivity verification** - Verify tunnel is working
+
+**During this state**:
+- Only the VPN endpoint can be reached
+- All other traffic is blocked by firewall
+- Multiple connection attempts may be made
+- Offline detection can pause attempts
+
+**Transitions from this state**:
+- → **Connected**: Tunnel is up and verified working
+- → **Error**: Unrecoverable error during connection
+- → **Disconnecting**: User requests disconnect
+- → **Connecting** (same state): Reconnect with different parameters (e.g., new relay)
+
+**Retry behavior**:
+- Automatic retry with same relay on transient failures
+- Switch to different relay after repeated failures
+- Respect offline state (pause attempts when no network)
+
+### Connected
+
+**Description**: Tunnel is established and verified working. All traffic is routed through the VPN.
+
+**What happens on entry**:
+1. **Tunnel monitor started** - Continuously verifies connectivity
+2. **Final routing configuration** - Ensure all traffic goes through tunnel
+3. **Split tunneling applied** - Exclude specified apps (if configured)
+4. **Location query** - Determine exit IP and location
+5. **State broadcast** - Notify frontends of successful connection
+
+**Characteristics**:
+- All traffic routed through VPN tunnel
+- Firewall enforces tunnel-only traffic
+- Continuous monitoring of tunnel health
+- GeoIP queries to verify exit location
+- Leak checker validates no leaks (on supported platforms)
+
+**Monitoring**:
+- **Tunnel monitor**: Sends periodic pings through tunnel
+- **Connectivity check**: Verifies internet connectivity
+- **Offline detection**: Detects if network interface goes down
+
+**Transitions from this state**:
+- → **Disconnecting**: User requests disconnect
+- → **Connecting**: Intentional reconnect (relay change, settings update)
+- → **Disconnecting** → **Error**: Unrecoverable error detected
+
+### Disconnecting
+
+**Description**: Tearing down the tunnel and restoring system to original configuration.
+
+**What happens in this state**:
+1. **Stop tunnel monitor**
+2. **Close tunnel connection** - Terminate WireGuard/OpenVPN
+3. **Remove routes** - Clean up routing table entries
+4. **Restore DNS** - Return to system default DNS
+5. **Remove firewall rules** - Clean up tunnel-related rules
+6. **Split tunneling cleanup**
+
+**After disconnect action**:
+
+This state includes metadata about what to do after disconnection completes:
+
+- **AfterDisconnect::Nothing** → **Disconnected**: Normal disconnect, return to disconnected state
+- **AfterDisconnect::Block** → **Error**: Error occurred, enter error state
+- **AfterDisconnect::Reconnect** → **Connecting**: Reconnect with new parameters
+
+**Transitions from this state**:
+- → **Disconnected**: Cleanup complete, after-action was Nothing
+- → **Error**: Cleanup complete, after-action was Block
+- → **Connecting**: Cleanup complete, after-action was Reconnect
+
+### Error
+
+**Description**: An unrecoverable error occurred. All traffic is blocked to prevent leaks.
+
+**Characteristics**:
+- **All traffic blocked** (except API endpoint)
+- User cannot access network
+- Firewall in maximum security configuration
+- Error cause is recorded and displayed to user
+
+**Common error causes**:
+- Authentication failure (invalid account/device)
+- No relays match current constraints
+- Firewall configuration failure
+- Tunnel creation failure (missing kernel modules, driver issues)
+- Device revoked or removed
+- Account expired
+
+**Error state types**:
+
+1. **Blocking**: Successfully configured firewall to block traffic
+   - System is secured, no leaks possible
+   - User cannot access network until issue resolved
+
+2. **Non-blocking**: Failed to configure firewall
+   - **Rare and serious**: indicates system firewall unavailable
+   - Traffic may leak; user is warned
+
+**Transitions from this state**:
+- → **Connecting**: User takes action to resolve error (new account, change settings)
+- → **Disconnecting** → **Disconnected**: User requests disconnect
+
+**Recovery**:
+- Some errors auto-resolve (temporary API failures)
+- Most require user intervention (account issues, setting changes)
+- UI displays error with actionable guidance
+
+## State Machine Inputs
+
+The tunnel state machine reacts to two types of inputs:
+
+### Commands
+
+Commands are sent from the daemon to control tunnel behavior:
+
+#### Connect
+- **Effect**: Establish a secure VPN connection
+- **From Disconnected**: → Connecting
+- **From Error**: → Connecting (attempt to recover)
+- **From Connecting/Connected**: No effect (already connecting/connected)
+
+#### Disconnect
+- **Effect**: Tear down VPN connection and return to disconnected
+- **From Connected/Connecting**: → Disconnecting → Disconnected
+- **From Error**: → Disconnecting → Disconnected
+- **From Disconnected**: No effect
+
+#### Reconnect
+- **Effect**: Disconnect and immediately reconnect (used for setting changes)
+- **From Connected**: → Disconnecting → Connecting
+- **From Connecting**: → (new) Connecting with new parameters
+- **From Disconnected**: → Connecting
+
+#### AllowLan(bool)
+- **Effect**: Enable/disable local network access while connected
+- Updates firewall rules in real-time
+- No state transition
+
+#### BlockWhenDisconnected(bool)
+- **Effect**: Enable/disable lockdown mode
+- Configures whether firewall blocks traffic in disconnected state
+- No state transition, but affects disconnected state behavior
+
+### External Events
+
+Events from the system or tunnel monitor that the state machine reacts to:
+
+#### TunnelUp
+- **Source**: Tunnel monitor
+- **Effect**: Connectivity verified, tunnel is working
+- **Transition**: Connecting → Connected
+
+#### TunnelDown
+- **Source**: Tunnel monitor
+- **Effect**: Tunnel connection lost
+- **From Connected**: → Disconnecting → Connecting (attempt reconnect)
+- **From Connecting**: Retry or try different relay
+
+#### TunnelMonitorStopped
+- **Source**: Tunnel monitor process died
+- **Effect**: Lost ability to monitor tunnel
+- **Transition**: Connected → Disconnecting → Error (cannot verify tunnel)
+
+#### IsOffline(bool)
+- **Source**: Offline monitor
+- **Effect**: Network connectivity changed
+- **true (offline)**: Pause connection attempts in Connecting state
+- **false (online)**: Resume connection attempts
+
+**Platform-specific offline detection**:
+- **Windows**: Default route existence + suspend/resume events
+- **Linux**: Route to public IP via exclusion mark (Netlink)
+- **macOS**: SCDynamicStore network service availability
+- **Android**: ConnectivityManager network callbacks
+- **iOS**: NWPathMonitor route monitoring
+
+## State Machine Outputs
+
+Every state transition produces a `TunnelStateTransition` event broadcast to all subscribed frontends:
+
+### TunnelStateTransition::Disconnected
+```rust
+Disconnected {
+    // No additional data
+}
+```
+
+### TunnelStateTransition::Connecting
+```rust
+Connecting {
+    endpoint: Endpoint,           // VPN server being connected to
+    location: Option<Location>,   // Geographic location of relay
+}
+```
+
+### TunnelStateTransition::Connected
+```rust
+Connected {
+    endpoint: Endpoint,           // Connected VPN server
+    location: Option<Location>,   // Exit location
+    tunnel_type: TunnelType,      // WireGuard or OpenVPN
+}
+```
+
+### TunnelStateTransition::Disconnecting
+```rust
+Disconnecting {
+    after_disconnect: AfterDisconnect, // What happens next
+}
+
+enum AfterDisconnect {
+    Nothing,    // → Disconnected
+    Block,      // → Error
+    Reconnect,  // → Connecting
+}
+```
+
+### TunnelStateTransition::Error
+```rust
+Error {
+    cause: ErrorStateCause,    // Why the error occurred
+    blocking: bool,            // Successfully blocking traffic?
+}
+
+enum ErrorStateCause {
+    AuthFailed(Option<String>),
+    Ipv6Unavailable,
+    SetFirewallPolicyError,
+    StartTunnelError,
+    TunnelParameterError(ParameterGenerationError),
+    IsOffline,
+    // ... many other specific error types
+}
+```
+
+## Connection Flow Details
+
+### Standard Connection Sequence
+
+```
+1. User clicks "Connect" or auto-connect triggers
+   │
+   ▼
+2. Daemon sends Connect command to TSM
+   │
+   ▼
+3. TSM transitions: Disconnected → Connecting
+   │
+   ├─► Event: TunnelStateTransition::Connecting broadcast
+   │
+   ▼
+4. Generate tunnel parameters:
+   │
+   ├─► Query relay selector for suitable relay
+   ├─► Generate ephemeral keys (if quantum-resistant)
+   ├─► Configure obfuscation (Shadowsocks, UDP2TCP)
+   ├─► Set up multihop if configured
+   │
+   ▼
+5. Apply security policies:
+   │
+   ├─► Configure firewall (block all except VPN endpoint)
+   ├─► Set DNS to Mullvad DNS
+   ├─► Prepare routing tables
+   │
+   ▼
+6. Create and start tunnel:
+   │
+   ├─► WireGuard: Configure wireguard-go or kernel module
+   ├─► Set tunnel interface up
+   ├─► Configure interface routes
+   │
+   ▼
+7. Verify connectivity:
+   │
+   ├─► Tunnel monitor sends connectivity check
+   ├─► Wait for TunnelUp event
+   │
+   ▼
+8. TSM transitions: Connecting → Connected
+   │
+   ├─► Event: TunnelStateTransition::Connected broadcast
+   ├─► Start continuous tunnel monitoring
+   ├─► Query GeoIP for exit location
+   │
+   ▼
+9. Connected state maintained:
+   │
+   ├─► Periodic connectivity checks
+   ├─► Monitor for TunnelDown events
+   └─► Monitor for offline state
+```
+
+### Reconnection on Setting Change
+
+```
+User changes relay constraint (e.g., select different country)
+│
+▼
+Daemon:
+├─► Save new settings
+├─► Update relay selector
+└─► Send Reconnect command to TSM
+    │
+    ▼
+    TSM (currently Connected):
+    ├─► Transition: Connected → Disconnecting
+    ├─► Set after_disconnect = Reconnect
+    ├─► Clean up existing tunnel
+    ├─► Restore system configuration
+    ├─► Transition: Disconnecting → Connecting
+    ├─► Select new relay with updated constraints
+    └─► Establish new connection
+        │
+        ▼
+        Back to Connected with new relay
+```
+
+### Error Recovery
+
+```
+TunnelDown event received in Connected state
+│
+▼
+Determine error type:
+├─► Recoverable (network glitch):
+│   │
+│   ▼
+│   Transition: Connected → Disconnecting → Connecting
+│   └─► Attempt reconnect
+│
+└─► Unrecoverable (auth failure, account expired):
+    │
+    ▼
+    Transition: Connected → Disconnecting → Error
+    ├─► Block all traffic
+    ├─► Display error to user
+    └─► Wait for user intervention
+```
+
+## Quantum-Resistant Tunnels
+
+When quantum-resistant encryption is enabled, the connection process involves additional steps:
+
+### Single-Hop Quantum-Resistant
+
+```
+1. Establish regular WireGuard tunnel to relay
+2. Within that tunnel, perform post-quantum key exchange (KEM)
+3. Derive pre-shared key (PSK) from KEM
+4. Generate new ephemeral WireGuard key
+5. Tear down initial tunnel
+6. Establish new tunnel using:
+   ├─► New ephemeral key
+   └─► PSK from quantum-safe exchange
+7. Both peers have quantum-resistant shared secret
+```
+
+### Multihop Quantum-Resistant
+
+```
+1. Establish regular multihop tunnel (entry → exit)
+2. Negotiate PSK with exit relay (within tunnel)
+3. Tear down multihop tunnel
+4. Establish regular tunnel to entry relay only
+5. Negotiate PSK with entry relay
+6. Tear down entry-only tunnel
+7. Establish new multihop tunnel using:
+   ├─► New ephemeral WireGuard key (same for both hops)
+   ├─► PSK with entry relay
+   └─► PSK with exit relay
+8. Both hops are quantum-resistant
+```
+
+See `talpid-tunnel-config-client/proto/ephemeralpeer.proto` for protocol details.
+
+## Platform-Specific Considerations
+
+### Windows
+- Suspend/resume events affect offline detection
+- WinFW firewall integration (see [winfw documentation](https://github.com/mullvad/mullvadvpn-app/blob/main/windows/winfw/README.md))
+- Split tunneling via driver
+- Network interface changes require special handling
+
+### Linux
+- Netlink for routing and offline detection
+- iptables/nftables for firewall
+- Split tunneling via cgroups v2 or v1 (net_cls)
+- Firewall mark for exclusion routing
+
+### macOS
+- SCDynamicStore for offline detection
+- macOS may delay route publication after wake [see documentation](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/allow-macos-network-check.md)
+- Split tunneling via driver
+- Filtering resolver for DNS
+
+### Android
+- VpnService.Builder API
+- Per-app VPN (split tunneling)
+- ConnectivityManager for offline detection
+- Always-on VPN support
+
+### iOS
+- NEPacketTunnelProvider API
+- WireGuard-kit handles tunnel
+- NWPathMonitor for offline detection
+- Network extension sandboxing
+
+## Debugging and Observability
+
+State transitions are logged extensively:
+
+```
+[mullvad_daemon][INFO] Tunnel state transition: Disconnected
+[talpid_core::tunnel_state_machine][INFO] Connecting to relay se-got-wg-001
+[talpid_core::firewall][INFO] Applying firewall rules for connecting state
+[talpid_core::dns][INFO] Setting DNS servers to 10.64.0.1
+[talpid_core::tunnel_state_machine][INFO] Tunnel state transition: Connecting
+[wireguard_go_rs][INFO] Starting WireGuard tunnel
+[talpid_core::tunnel_state_machine::tunnel_monitor][INFO] Tunnel connectivity verified
+[talpid_core::tunnel_state_machine][INFO] Tunnel state transition: Connected
+```
+
+Each state transition includes:
+- Timestamp
+- Previous state
+- New state  
+- Reason for transition
+- Relevant endpoint/error information
+
+## Related Documentation
+
+- [Daemon Architecture](/architecture/daemon) - How TSM integrates with daemon
+- [Architecture Overview](/architecture/overview) - Overall system design
+- [Frontends](/architecture/frontends) - How frontends receive state updates
+- [Security Model](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md) - Security guarantees
+- [Split Tunneling](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/split-tunneling.md) - Split tunneling implementation

@@ -1,0 +1,332 @@
+---
+title: External Security Audits
+description: Independent security audits and assessments of the Mullvad VPN application
+---
+
+Mullvad performs third-party security audits of the entire VPN app every two years, plus specialized audits for specific features. All audit reports are publicly available for full transparency.
+
+## Audit Philosophy
+
+Mullvad's approach to security audits:
+
+- **Regular cadence**: Full security assessment every two years
+- **Different auditors**: Each audit performed by a different company for fresh perspectives
+- **Full transparency**: All reports published, including initial and final versions  
+- **Rapid remediation**: Issues are fixed during or immediately after the audit
+- **Specialized audits**: Additional focused audits for specific features or components
+
+<Note>
+By using different auditors for each assessment, Mullvad gets different sets of eyes with different skills and mindsets examining the codebase. This helps discover issues that previous audits may have missed.
+</Note>
+
+## Full Application Audits
+
+Comprehensive security assessments of the entire Mullvad VPN application across all platforms.
+
+### 2024 - X41 D-Sec
+
+**Auditor**: [X41 D-Sec](https://x41-dsec.de/)  
+**Duration**: 30 person-days (October-November 2024)  
+**Platforms**: Windows, Linux, macOS, iOS, Android  
+**Report Date**: December 10, 2024
+
+**Key Findings:**
+- 6 vulnerabilities discovered (0 critical, 3 high, 2 medium, 1 low)
+- 3 additional issues without direct security impact
+- 4 issues fixed during the audit
+
+**Conclusion Quote:**
+> Overall, the Mullvad VPN Application appear to have a high security level and are well positioned to protect from the threat model proposed in this report. The use of safe coding and design patterns in combination with regular audits and penetration tests led to a very hardened environment.
+
+**High Severity Findings:**
+
+1. **MLLVD-CR-24-01**: Signal handler alternate stack too small (Linux, macOS, Android)
+   - *Status*: Fixed in version 2024.8 (desktop) and 2024.9-beta1 (Android)
+
+2. **MLLVD-CR-24-02**: Signal handler uses non-reentrant safe functions (Linux, macOS, Android)  
+   - *Status*: Fixed in version 2024.8 (desktop) and 2024.9-beta1 (Android)
+
+3. **MLLVD-CR-24-06**: Windows installer runs adjacent `taskkill.exe`
+   - *Status*: Fixed in version 2024.8
+   - Impact: Privilege escalation if malicious `taskkill.exe` placed in installer directory
+
+**Medium Severity Findings:**
+
+1. **MLLVD-CR-24-03**: Virtual IP address of tunnel device leaks to network adjacent participant
+   - *Status*: Fixed on Linux (version 2024.8), Android limitation reported to Google
+   - Impact: Local network adversary can potentially identify if device is using Mullvad
+
+2. **MLLVD-CR-24-04**: Deanonymization through NAT
+   - *Status*: Known limitation, mitigated by DAITA and multihop features
+   - Impact: Complex attack requiring spoofed UDP packets and traffic observation
+
+**Report Links:**
+- [X41 D-Sec announcement](https://x41-dsec.de/news/2024/12/11/mullvad/)
+- [Final report (2024-12-10)](https://www.x41-dsec.de/static/reports/X41-Mullvad-Audit-Public-Report-2024-12-10.pdf)
+- [Initial report (2024-11-30)](https://www.x41-dsec.de/static/reports/X41-Mullvad-Audit-Final-Report-2024-11-18.pdf)
+
+---
+
+### 2022 - Atredis Partners
+
+**Auditor**: [Atredis Partners](https://www.atredis.com/)  
+**Duration**: 4 weeks (September-October 2022)  
+**Platforms**: Windows, Linux, macOS, iOS, Android  
+**Report Date**: October 14, 2022
+
+**Key Findings:**
+- 5 findings total (0 critical, 0 high, 2 medium, 2 low, 1 info)
+- 2 findings fixed
+- 2 findings documented as Android limitations
+
+**Conclusion Quote:**
+> Overall, Atredis Partners found the Mullvad VPN clients to be well-architected from a security perspective, with limited attack surface that could be reached by an external malicious party, and important protection mechanisms were in place to prevent most unintended traffic leaks.
+
+**Notable Findings:**
+
+1. **MUL22-01**: Out-of-bounds read in win-split-tunnel kernel driver (Low)
+   - *Status*: Fixed in version 2022.5-beta1
+   - Impact: Required administrator privileges to exploit
+
+2. **MUL22-02**: Leak of traffic during system shutdown (Medium)  
+   - *Status*: Fixed on all platforms in version 2022.5-beta1
+   - Impact: Potential traffic leak during system shutdown
+   - Also fixed similar boot-time leak on Linux
+
+3. **MUL22-03**: Connectivity checks bypass VPN on Android (Medium)
+   - *Status*: Android limitation, documented and reported to Google
+   - Impact: System connectivity checks leak outside VPN
+
+4. **MUL22-04**: Permissive inbound network filtering on Android (Low)
+   - *Status*: Android limitation, documented
+
+**Report Links:**
+- [Atredis Partners report](https://www.atredis.com/s/Atredis-Partners-Mullvad-VPN-Platform-Security-Assessment-Report-v10.pdf)
+- [Mullvad blog post](https://mullvad.net/blog/2022/10/10/android-leaks-connectivity-check-traffic)
+
+---
+
+### 2020 - Cure53
+
+**Auditor**: [Cure53](https://cure53.de/)  
+**Duration**: 20 days (May-June 2020)  
+**Platforms**: Windows, Linux, macOS, iOS, Android  
+**Report Date**: June 12, 2020
+
+**Key Findings:**
+- 7 issues found (0 critical, 0 high, 2 medium, 2 low, 3 info)
+- 5 issues fixed
+- All fixes implemented before final report
+
+**Conclusion Quote:**
+> The results of this May-June 2020 project targeting the Mullvad complex are quite positive. [...] Mullvad clearly represents a mature design as a function of a sound development process. [...] The Mullvad complex is definitely on the right track from a security standpoint.
+
+**Notable Findings:**
+
+1. **MUL-02-002**: Firewall allows deanonymization by eavesdropper (Medium)
+   - *Status*: Fixed on all desktop platforms
+   - Impact: State-funded adversary could potentially deanonymize users
+
+2. **MUL-02-007**: Named pipe exposed via SMB accessible to everyone (Medium)  
+   - *Status*: Fixed
+   - Impact: Control Mullvad from network if "Allow LAN" enabled and Windows "password protected sharing" disabled
+
+3. **MUL-02-001**: Lack of filesystem protections on iOS (Info)
+   - *Status*: Fixed by removing unnecessary cache file
+
+**Report Links:**
+- [Final report (v2)](https://cure53.de/pentest-report_mullvad_2020_v2.pdf)
+- [Initial report (v1)](https://cure53.de/pentest-report_mullvad_2020_v1.pdf)
+
+---
+
+### 2018 - Assured & Cure53
+
+**Auditor**: [Cure53](https://cure53.de/) and [Assured](https://assured.se/)  
+**Duration**: 18 days (September 2018)  
+**Platforms**: Windows, Linux, macOS  
+**Report Date**: September 24, 2018
+
+**Key Findings:**
+- 7 issues found (6 related to app, 1 to website)
+- 0 remotely exploitable issues
+- No traffic leaks or leak-forcing methods found
+
+**Conclusion Quote:**
+> The assessment yielded a total of seven issues, which [is] an exceptionally small number given the complex field of the VPN software and the connected, vast attack surface.
+
+**Notable Findings:**
+
+1. **MUL-01-004**: Privilege escalation by replacing executables on Windows (Critical)
+   - *Status*: Fixed in version 2018.3
+   - Impact: Local user could abuse app to gain administrator privileges
+
+2. **MUL-01-006**: Any user can issue WebSocket commands (High)  
+   - *Status*: Intentional design, later migrated from WebSocket to IPC
+   - Impact: Any local user can control the app
+
+**Report Links:**
+- [Final report (v2)](https://cure53.de/pentest-report_mullvad_v2.pdf)
+- [Initial report (v1)](https://cure53.de/pentest-report_mullvad_v1.pdf)
+- [Mullvad blog post](https://mullvad.net/en/blog/2018/9/24/read-results-security-audit-mullvad-app/)
+
+## Specialized Audits
+
+Focused audits of specific features or components.
+
+### 2025 - Assured: Installer Downloader
+
+**Auditor**: [Assured Security Consultants](https://www.assured.se/)  
+**Duration**: 1 week (March 10-17, 2025)  
+**Scope**: Installer downloader application, release script, installer metadata  
+**Report Date**: March 20, 2025
+
+**Conclusion Quote:**
+> Based on our review of the source code, the new downloader installer solution seems to be well thought out and implemented.
+
+**Key Findings:**
+
+1. **3.1**: Release script doesn't verify GPG key is trusted (Low)
+   - *Status*: Migrated to Sequoia for explicit key trust
+
+2. **3.2**: `deserialize_and_verify` doesn't return exact signed data (Note)  
+   - *Status*: Fixed to only use verified data
+
+3. **3.3**: Short random directory name (Note)
+   - *Status*: Documentation clarified, TOCTOU not in threat model
+
+4. **3.4**: `thread_rng()` deprecated in newer rand version (Note)
+   - *Status*: Will update when upgrading rand library
+
+**Report Links:**
+- [Assured report](https://www.assured.se/publications/Assured_Mullvad_Installer_Downloader_Audit_2025.pdf)
+
+---
+
+### 2025 - NCC Group: Android MASA
+
+**Auditor**: [NCC Group](https://www.nccgroup.com/)  
+**Assessment**: Mobile Application Security Assessment (MASA)  
+**Platform**: Android  
+**Report Date**: February 24, 2025
+
+**Result:**
+
+<Note>
+The Mullvad Android app **passed all controls** in the MASA certification.
+</Note>
+
+MASA is a comprehensive security assessment framework for mobile applications, testing for vulnerabilities, insecure data storage, insufficient cryptography, and more.
+
+**Certificate Links:**
+- [MASA certificate (App Defence Alliance)](https://appdefensealliance.dev/reports/net.mullvad.mullvadvpn_1740398400000000.pdf)
+
+## Common Audit Findings
+
+Across multiple audits, some themes emerge:
+
+### What Auditors Found
+
+**✅ Strengths:**
+- Well-architected security design
+- Limited attack surface for external attackers  
+- Effective leak protection mechanisms
+- Atomic firewall rule transactions
+- Rapid response to findings
+- Mature development process
+
+**⚠️ Areas Improved:**
+- Boot/shutdown leak protection (fixed 2022)
+- Signal handler safety (fixed 2024)
+- Platform-specific limitations (documented)
+- Binary hardening (in progress)
+
+### What Auditors Didn't Find
+
+- **No critical vulnerabilities** in the last three audits (2020, 2022, 2024)
+- **No remotely exploitable issues** in any audit
+- **No traffic leak methods** discovered by auditors
+- **No ways to force leaks** through network attacks
+
+## Platform-Specific Limitations
+
+Audits have identified inherent platform limitations that Mullvad cannot fully mitigate:
+
+### Android
+
+<Warning>
+- Connectivity checks bypass VPN (system exemption)
+- Network time (NTP) bypasses VPN (system exemption)
+- Hotspot traffic bypasses VPN (system exemption)  
+- Incoming connections not blocked by VPN Service API
+- Virtual IP can leak via ARP to local network
+</Warning>
+
+Mullvad has [reported these issues to Google](https://issuetracker.google.com/issues/249990229) and documented them as [known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md).
+
+### macOS
+
+<Warning>
+Service start order cannot be controlled, creating potential boot-time leak window before `mullvad-daemon` starts and applies firewall rules.
+</Warning>
+
+This is a [known macOS limitation](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md).
+
+## Audit Scope and Threat Model
+
+Audits typically focus on:
+
+### In Scope
+
+- Can an outside attacker learn user identity or cause traffic leaks?
+- Can an outside attacker crash or malfunction the VPN?
+- Can a low-privileged local user escalate privileges via the app?
+- Are security policies enforced correctly in all states?
+- Do leak protection mechanisms work as designed?
+
+### Out of Scope
+
+- Malware with local access to the device
+- Attackers with root/administrator privileges  
+- Physical access to the device
+- Social engineering attacks
+
+See [Security Overview](/security/overview) for detailed threat model.
+
+## How to Read Audit Reports
+
+When reading audit reports:
+
+1. **Check severity ratings**: Critical/High require immediate attention, Low/Info are often edge cases
+2. **Read Mullvad's response**: Each finding includes Mullvad's analysis and remediation
+3. **Look at fix status**: Most issues are fixed during or immediately after the audit  
+4. **Consider exploitability**: Some vulnerabilities are technically possible but practically difficult to exploit
+5. **Read conclusions**: Auditors provide overall assessment of security posture
+
+## Reporting Security Issues
+
+Found a security issue? Please report it responsibly:
+
+- [Create a vulnerability report on GitHub](https://github.com/mullvad/mullvadvpn-app/security/advisories/new)
+- Email: [support@mullvadvpn.net](mailto:support@mullvadvpn.net) (PGP available)
+
+Before reporting, please read:
+- [Security documentation](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md) - Expected security properties
+- [Known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md) - Already documented limitations
+
+<Warning>
+Please do not report security vulnerabilities through GitHub issues or other public channels. Use the private reporting mechanisms above.
+</Warning>
+
+## Related Documentation
+
+- [Security Overview](/security/overview) - High-level security architecture and threat model
+- [Leak Protection](/security/leak-protection) - How Mullvad prevents traffic leaks  
+- [Architecture](/architecture/overview) - System design and implementation
+
+## Source Code References
+
+- [Audit reports directory](https://github.com/mullvad/mullvadvpn-app/tree/main/audits)
+- [Security documentation](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md)  
+- [Security policy](https://github.com/mullvad/mullvadvpn-app/blob/main/SECURITY.md)
+- [Known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md)

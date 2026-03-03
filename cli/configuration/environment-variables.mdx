@@ -1,0 +1,349 @@
+---
+title: Environment Variables
+description: Configure Mullvad VPN daemon and frontend behavior using environment variables
+---
+
+## Daemon Environment Variables
+
+These environment variables control the behavior of the Mullvad VPN daemon.
+
+### Firewall Configuration
+
+#### TALPID_FIREWALL_DEBUG
+
+Helps debug firewall rules. Behavior varies by platform:
+
+<Tabs>
+  <Tab title="Linux">
+    Set to `"1"` to add packet counters to all firewall rules.
+    
+    ```bash
+    export TALPID_FIREWALL_DEBUG=1
+    ```
+  </Tab>
+  <Tab title="macOS">
+    Makes rules log packets to the `pflog0` interface:
+    
+    - `"all"` - Add logging to all rules
+    - `"pass"` - Add logging to rules allowing packets
+    - `"drop"` - Add logging to rules blocking packets
+    
+    ```bash
+    export TALPID_FIREWALL_DEBUG=all
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Not applicable on Windows.
+  </Tab>
+</Tabs>
+
+#### TALPID_FIREWALL_DONT_SET_SRC_VALID_MARK
+
+Set to `1` to prevent the daemon from setting the `net.ipv4.conf.all.src_valid_mark` kernel parameter on Linux.
+
+```bash
+export TALPID_FIREWALL_DONT_SET_SRC_VALID_MARK=1
+```
+
+<Note>
+By default, the daemon sets this kernel parameter to `1` to prevent strict reverse path filtering from blocking relay traffic. Only disable if you understand the implications.
+</Note>
+
+#### TALPID_FIREWALL_DONT_SET_ARP_IGNORE
+
+Set to `1` to prevent the daemon from setting the `net.ipv4.conf.all.arp_ignore` kernel parameter on Linux.
+
+```bash
+export TALPID_FIREWALL_DONT_SET_ARP_IGNORE=1
+```
+
+<Warning>
+By default, this parameter is set to `2` to prevent attackers from discovering the in-tunnel IP via ARP requests. Only disable for testing purposes.
+</Warning>
+
+### DNS Configuration
+
+#### TALPID_DNS_MODULE
+
+Override the automatic DNS configuration method detection.
+
+<Tabs>
+  <Tab title="Linux">
+    Available options:
+    
+    - `"static-file"` - Modify `/etc/resolv.conf` directly
+    - `"resolvconf"` - Use the `resolvconf` program
+    - `"systemd"` - Use systemd's `resolved` service via DBus
+    - `"network-manager"` - Use NetworkManager via DBus
+    
+    ```bash
+    export TALPID_DNS_MODULE=systemd
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Available options:
+    
+    - `"iphlpapi"` - Use the IP helper API
+    - `"netsh"` - Use the `netsh` program
+    - `"tcpip"` - Set TCP/IP parameters in the registry
+    
+    ```powershell
+    $env:TALPID_DNS_MODULE = "iphlpapi"
+    ```
+  </Tab>
+  <Tab title="macOS">
+    DNS module configuration is automatic on macOS.
+  </Tab>
+</Tabs>
+
+#### TALPID_DISABLE_LOCAL_DNS_RESOLVER
+
+Set to `1` to disable the local DNS resolver (macOS only).
+
+```bash
+export TALPID_DISABLE_LOCAL_DNS_RESOLVER=1
+```
+
+#### TALPID_NEVER_FILTER_AAAA_QUERIES
+
+Set to `1` to never ignore DNS AAAA queries (macOS only).
+
+```bash
+export TALPID_NEVER_FILTER_AAAA_QUERIES=1
+```
+
+### WireGuard Configuration
+
+#### TALPID_FORCE_USERSPACE_WIREGUARD
+
+Forces the daemon to use the userspace implementation of WireGuard instead of the kernel module.
+
+```bash
+export TALPID_FORCE_USERSPACE_WIREGUARD=1
+```
+
+### Network Monitoring
+
+#### TALPID_DISABLE_OFFLINE_MONITOR
+
+Forces the daemon to always assume the host is online, disabling network connectivity checks.
+
+```bash
+export TALPID_DISABLE_OFFLINE_MONITOR=1
+```
+
+### Split Tunneling (Linux)
+
+#### TALPID_CGROUP2_FS
+
+Forces the daemon to look for the cgroup2 filesystem at a custom path instead of `/sys/fs/cgroup`.
+
+```bash
+export TALPID_CGROUP2_FS=/custom/cgroup/path
+```
+
+#### TALPID_NET_CLS_MOUNT_DIR
+
+Forces the daemon to mount the `net_cls` controller in a specific directory (cgroup v1 systems only).
+
+```bash
+export TALPID_NET_CLS_MOUNT_DIR=/custom/mount/dir
+```
+
+### Access Control
+
+#### MULLVAD_MANAGEMENT_SOCKET_GROUP
+
+Restricts access to the management interface socket to users in a specific group (Linux and macOS only).
+
+```bash
+export MULLVAD_MANAGEMENT_SOCKET_GROUP=mullvad-users
+```
+
+<Note>
+By default, everyone has access to the management socket. Use this variable to restrict CLI and GUI access.
+</Note>
+
+### Debugging
+
+#### MULLVAD_BACKTRACE_ON_FAULT
+
+Controls whether the daemon logs a backtrace when encountering a fault (e.g., SIGSEGV).
+
+- `1` - Enable backtrace logging
+- `0` - Disable backtrace logging
+- Default: Enabled in debug builds, disabled in release builds
+
+```bash
+export MULLVAD_BACKTRACE_ON_FAULT=1
+```
+
+<Warning>
+Backtrace logging causes heap allocation in the signal handler, which is technically undefined behavior. Enable at your own risk.
+</Warning>
+
+### File Paths
+
+These environment variables override default file and directory locations:
+
+#### MULLVAD_SETTINGS_DIR
+
+Customize the settings directory location.
+
+```bash
+export MULLVAD_SETTINGS_DIR=/custom/settings/path
+```
+
+#### MULLVAD_LOG_DIR
+
+Customize the log directory location.
+
+```bash
+export MULLVAD_LOG_DIR=/custom/logs/path
+```
+
+#### MULLVAD_CACHE_DIR
+
+Customize the cache directory location.
+
+```bash
+export MULLVAD_CACHE_DIR=/custom/cache/path
+```
+
+#### MULLVAD_RPC_SOCKET_PATH
+
+Customize the full path to the RPC socket.
+
+```bash
+export MULLVAD_RPC_SOCKET_PATH=/custom/socket/path
+```
+
+See [File Paths](/cli/configuration/file-paths) for default locations.
+
+## Development-Only Variables
+
+<Warning>
+These variables only work in development builds and are ignored in release builds.
+</Warning>
+
+#### MULLVAD_API_HOST
+
+Set the hostname for API requests.
+
+```bash
+export MULLVAD_API_HOST=api.mullvad.net
+```
+
+#### MULLVAD_API_ADDR
+
+Set the IP address and port for API requests.
+
+```bash
+export MULLVAD_API_ADDR=10.10.1.2:443
+```
+
+#### MULLVAD_API_DISABLE_TLS
+
+Use plain HTTP for API requests instead of HTTPS.
+
+```bash
+export MULLVAD_API_DISABLE_TLS=1
+```
+
+#### MULLVAD_CONNCHECK_HOST
+
+Set the hostname for connection check requests.
+
+```bash
+export MULLVAD_CONNCHECK_HOST=am.i.mullvad.net
+```
+
+#### MULLVAD_ENABLE_DEV_UPDATES
+
+Enable version checks in development builds.
+
+```bash
+export MULLVAD_ENABLE_DEV_UPDATES=1
+```
+
+## Desktop Frontend Variables
+
+These variables control the Electron desktop application.
+
+#### MULLVAD_PATH
+
+Customize the path to the `mullvad-problem-report` tool when running in development mode.
+
+```bash
+export MULLVAD_PATH=/path/to/target/debug/
+```
+
+Defaults to `<repo>/target/debug/`.
+
+#### MULLVAD_DISABLE_UPDATE_NOTIFICATION
+
+Set to `1` to disable notifications when updates are available.
+
+```bash
+export MULLVAD_DISABLE_UPDATE_NOTIFICATION=1
+```
+
+## Setting Environment Variables
+
+The method for setting environment variables varies by platform:
+
+<Tabs>
+  <Tab title="Windows">
+    Use `setx` from an elevated command prompt:
+    
+    ```bat
+    setx TALPID_DISABLE_OFFLINE_MONITOR 1 /m
+    ```
+    
+    Restart the daemon for changes to take effect:
+    
+    ```bat
+    sc.exe stop mullvadvpn
+    sc.exe start mullvadvpn
+    ```
+  </Tab>
+  <Tab title="Linux">
+    Edit the systemd unit file:
+    
+    ```bash
+    sudo systemctl edit mullvad-daemon.service
+    ```
+    
+    Add the environment variable:
+    
+    ```ini
+    [Service]
+    Environment="TALPID_DISABLE_OFFLINE_MONITOR=1"
+    ```
+    
+    Restart the daemon:
+    
+    ```bash
+    sudo systemctl restart mullvad-daemon
+    ```
+  </Tab>
+  <Tab title="macOS">
+    Use `plutil` to edit the launch daemon plist:
+    
+    ```bash
+    sudo plutil -replace EnvironmentVariables -json '{"TALPID_DISABLE_OFFLINE_MONITOR": "1"}' /Library/LaunchDaemons/net.mullvad.daemon.plist
+    ```
+    
+    Restart the daemon:
+    
+    ```bash
+    launchctl unload -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+    launchctl load -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+    ```
+  </Tab>
+</Tabs>
+
+## Related Resources
+
+- [File Paths](/cli/configuration/file-paths) - Default and custom file locations
+- [Settings Management](/cli/configuration/settings) - Configure app settings

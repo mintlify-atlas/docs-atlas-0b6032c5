@@ -1,0 +1,505 @@
+---
+title: 'Obfuscation Protocols'
+description: 'Bypass VPN blocking and censorship with UDP-over-TCP, Shadowsocks, QUIC, and LWO obfuscation'
+---
+
+## Overview
+
+Obfuscation protocols disguise WireGuard VPN traffic to bypass network restrictions, firewalls, and censorship. When networks block or throttle VPN connections, obfuscation makes your VPN traffic look like regular HTTPS or other common traffic.
+
+Mullvad supports four obfuscation methods:
+
+- **UDP-over-TCP (udp2tcp)**: Tunnels WireGuard UDP traffic over TCP connections
+- **Shadowsocks**: SOCKS5 proxy with encryption, originally designed to bypass Chinese censorship
+- **QUIC**: Modern transport protocol that looks like HTTP/3 traffic
+- **LWO (Lightweight WireGuard Obfuscation)**: Minimal overhead obfuscation designed specifically for WireGuard
+
+<Note>
+All obfuscation methods are available on Windows, Linux, macOS, and Android. LWO is not yet available on iOS.
+</Note>
+
+## When to Use Obfuscation
+
+### Use Cases
+
+✅ **Obfuscation is helpful when:**
+- Your ISP or network blocks VPN connections
+- Corporate firewalls detect and block VPN traffic
+- You're in a country with VPN restrictions (China, Iran, UAE, etc.)
+- Your connection works on some networks but not others
+- VPN traffic is being throttled or deprioritized
+
+❌ **Obfuscation is NOT needed for:**
+- Privacy protection (WireGuard encryption is sufficient)
+- Preventing traffic analysis (use [DAITA](/features/daita) instead)
+- General bypassing of geo-restrictions
+- Improving connection speed (obfuscation adds overhead)
+
+<Warning>
+Obfuscation adds latency and reduces throughput. Only enable it when necessary to bypass blocking.
+</Warning>
+
+## How Obfuscation Works
+
+### Without Obfuscation (Standard WireGuard)
+
+```
+[Your Device] ───(UDP/WireGuard)───> [VPN Server]
+                 ^
+                 │
+            Easily detected
+            as VPN traffic
+```
+
+### With Obfuscation
+
+```
+[Your Device] ──(TCP/HTTPS-like)──> [VPN Server]
+                 ^
+                 │
+            Looks like regular
+            web traffic
+```
+
+The VPN server receives the obfuscated traffic, unwraps it, and forwards the original WireGuard packets.
+
+## Obfuscation Methods
+
+### UDP-over-TCP (udp2tcp)
+
+**How it works**: Encapsulates WireGuard UDP packets inside TCP connections.
+
+**Advantages:**
+- Works on networks that only allow TCP
+- Simple and reliable
+- TCP ports (80, 443) blend with HTTPS traffic
+
+**Disadvantages:**
+- "TCP-over-TCP" problem can cause performance issues
+- Higher latency than native UDP
+- Reduced throughput
+
+**Available ports**: 80, 443, and other TCP ports configured on servers
+
+```bash
+# Enable UDP-over-TCP
+mullvad relay set obfuscation mode udp2tcp
+
+# Use specific port
+mullvad relay set obfuscation udp2tcp port 443
+```
+
+### Shadowsocks
+
+**How it works**: SOCKS5-based proxy with ChaCha20-Poly1305 encryption, specifically designed to evade deep packet inspection (DPI).
+
+**Advantages:**
+- Effective against sophisticated DPI systems
+- Proven to bypass Chinese Great Firewall
+- Additional encryption layer
+
+**Disadvantages:**
+- More overhead than other methods
+- May be slower than UDP-over-TCP
+
+**Use case**: Networks with advanced DPI that detect udp2tcp patterns.
+
+```bash
+# Enable Shadowsocks
+mullvad relay set obfuscation mode shadowsocks
+```
+
+### QUIC
+
+**How it works**: Tunnels WireGuard over QUIC protocol, the transport layer for HTTP/3.
+
+**Advantages:**
+- Looks like modern web traffic (HTTP/3)
+- Better performance than TCP-based methods
+- Built-in congestion control
+- Connection migration support
+
+**Disadvantages:**
+- Requires UDP (doesn't help on UDP-blocking networks)
+- Not all networks allow QUIC traffic
+
+**Use case**: Networks that allow UDP but detect and block WireGuard specifically.
+
+```bash
+# Enable QUIC obfuscation
+mullvad relay set obfuscation mode quic
+```
+
+<Info>
+QUIC obfuscation makes WireGuard traffic appear as HTTP/3, which is increasingly common and less likely to be blocked.
+</Info>
+
+### LWO (Lightweight WireGuard Obfuscation)
+
+**How it works**: Minimal obfuscation designed specifically for WireGuard with very low overhead.
+
+**Advantages:**
+- Lowest performance impact
+- Specifically designed for WireGuard
+- Efficient and lightweight
+
+**Disadvantages:**
+- May not bypass sophisticated DPI
+- Not available on iOS yet
+
+**Use case**: Light obfuscation when full UDP-over-TCP overhead is too high.
+
+```bash
+# Enable LWO (not available on iOS)
+mullvad relay set obfuscation mode lwo
+```
+
+## Automatic Obfuscation (Multiplexer)
+
+Mullvad can **automatically try multiple obfuscation methods** to find one that works:
+
+```rust
+// From source: talpid-types/src/net/obfuscation.rs
+Multiplexer {
+    direct: Option<SocketAddr>,      // Try direct connection first
+    configs: Vec<ObfuscatorConfig>,  // Then try obfuscated methods
+}
+```
+
+### Fallback Order
+
+1. **Direct connection** (no obfuscation)
+2. **Primary obfuscator** (e.g., udp2tcp)
+3. **Additional obfuscators** (e.g., Shadowsocks, QUIC)
+
+The first successful connection is used.
+
+<Note>
+Automatic mode is useful when you're unsure which obfuscation method works on your network. The app will find the best option automatically.
+</Note>
+
+## Enabling Obfuscation
+
+### Using the GUI
+
+<Steps>
+  <Step title="Open Settings">
+    Navigate to **Settings** → **VPN settings**
+  </Step>
+  
+  <Step title="Open Obfuscation Settings">
+    Find the **Obfuscation** section or **Advanced** settings
+  </Step>
+  
+  <Step title="Enable and Select Method">
+    - Toggle obfuscation **On**
+    - Choose method: **Automatic**, **UDP-over-TCP**, **Shadowsocks**, **QUIC**, or **LWO**
+    - Configure port if needed (for udp2tcp)
+  </Step>
+  
+  <Step title="Reconnect">
+    The app will reconnect using the selected obfuscation method
+  </Step>
+</Steps>
+
+### Using the CLI
+
+<Tabs>
+  <Tab title="Automatic">
+    Let the app choose the best obfuscation:
+    ```bash
+    mullvad relay set obfuscation mode auto
+    ```
+  </Tab>
+  
+  <Tab title="UDP-over-TCP">
+    ```bash
+    # Enable with automatic port
+    mullvad relay set obfuscation mode udp2tcp
+    
+    # Use specific port (443 for HTTPS)
+    mullvad relay set obfuscation mode udp2tcp port 443
+    
+    # Use port 80 (HTTP)
+    mullvad relay set obfuscation mode udp2tcp port 80
+    ```
+  </Tab>
+  
+  <Tab title="Shadowsocks">
+    ```bash
+    mullvad relay set obfuscation mode shadowsocks
+    ```
+  </Tab>
+  
+  <Tab title="QUIC">
+    ```bash
+    mullvad relay set obfuscation mode quic
+    ```
+  </Tab>
+  
+  <Tab title="LWO">
+    ```bash
+    # Not available on iOS
+    mullvad relay set obfuscation mode lwo
+    ```
+  </Tab>
+  
+  <Tab title="Disable">
+    ```bash
+    mullvad relay set obfuscation mode off
+    ```
+  </Tab>
+</Tabs>
+
+### Verify Obfuscation is Active
+
+```bash
+mullvad relay get
+```
+
+Output shows obfuscation settings:
+```
+Obfuscation: udp2tcp (port 443)
+```
+
+When connected:
+```bash
+mullvad status -v
+```
+
+Shows active obfuscation in connection details.
+
+## Port Selection
+
+### UDP-over-TCP Ports
+
+Common ports that blend with normal traffic:
+
+| Port | Service | Detection Risk |
+|------|---------|----------------|
+| 80 | HTTP | Low (very common) |
+| 443 | HTTPS | Lowest (most common) |
+| 5001 | Custom | Medium |
+
+```bash
+# Use port 443 (recommended)
+mullvad relay set obfuscation udp2tcp port 443
+
+# Use port 80
+mullvad relay set obfuscation udp2tcp port 80
+
+# Use custom port
+mullvad relay set obfuscation udp2tcp port 5001
+```
+
+<Info>
+Port 443 is recommended as it's used for HTTPS traffic and is least likely to be blocked or suspicious.
+</Info>
+
+### Available Ports per Server
+
+Not all servers support all ports:
+
+```bash
+# List servers with obfuscation support
+mullvad relay list
+```
+
+Server list shows `udp2tcp_ports` for each relay.
+
+## Performance Impact
+
+### Latency Overhead
+
+| Method | Additional Latency | Throughput Impact |
+|--------|-------------------|-------------------|
+| Direct (no obfuscation) | 0ms baseline | 0% baseline |
+| LWO | +5-10ms | ~5% |
+| QUIC | +10-20ms | ~10% |
+| UDP-over-TCP | +20-50ms | ~20-30% |
+| Shadowsocks | +30-60ms | ~25-35% |
+
+<Warning>
+UDP-over-TCP and Shadowsocks have the highest overhead due to TCP encapsulation and additional encryption layers.
+</Warning>
+
+### TCP-over-TCP Problem
+
+When using udp2tcp, you may experience:
+- **Doubled retransmissions**: Both inner (WireGuard/TCP apps) and outer (udp2tcp) TCP layers retransmit
+- **Congestion conflicts**: Multiple congestion control algorithms competing
+- **Reduced throughput**: Efficiency loss from nested protocols
+
+This is unavoidable when UDP is completely blocked, but worth understanding.
+
+## Compatibility
+
+Obfuscation works with:
+
+- ✅ [WireGuard protocol](/features/wireguard)
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [Multihop](/features/multihop) (obfuscation applies to first hop)
+- ✅ [DAITA](/features/daita)
+- ✅ [Custom DNS](/features/custom-dns)
+- ✅ [Content blockers](/features/content-blockers)
+
+### Obfuscation with Multihop
+
+When using obfuscation with multihop:
+- **Obfuscation applies to the entry server connection** (device → entry)
+- Entry → Exit connection uses standard WireGuard
+- Choose obfuscation method based on your network restrictions
+
+```bash
+# Multihop with UDP-over-TCP obfuscation
+mullvad relay set tunnel wireguard use-multihop on
+mullvad relay set obfuscation mode udp2tcp port 443
+```
+
+## Platform Support
+
+| Platform | udp2tcp | Shadowsocks | QUIC | LWO |
+|----------|---------|-------------|------|-----|
+| Windows | ✅ | ✅ | ✅ | ✅ |
+| Linux | ✅ | ✅ | ✅ | ✅ |
+| macOS | ✅ | ✅ | ✅ | ✅ |
+| Android | ✅ | ✅ | ✅ | ✅ |
+| iOS | ✅ | ✅ | ✅ | ❌ |
+
+## Troubleshooting
+
+### Connection Fails with Obfuscation
+
+1. **Try different method**
+   ```bash
+   # Try Shadowsocks instead of udp2tcp
+   mullvad relay set obfuscation mode shadowsocks
+   ```
+
+2. **Try different port** (for udp2tcp)
+   ```bash
+   # Switch from 443 to 80
+   mullvad relay set obfuscation mode udp2tcp port 80
+   ```
+
+3. **Use automatic mode**
+   ```bash
+   mullvad relay set obfuscation mode auto
+   ```
+
+4. **Check server support**
+   ```bash
+   mullvad relay list | grep -i obfuscation
+   ```
+
+### Slow Performance
+
+If obfuscation is too slow:
+
+1. **Try LWO** (lowest overhead)
+   ```bash
+   mullvad relay set obfuscation mode lwo
+   ```
+
+2. **Try QUIC** (if UDP is allowed)
+   ```bash
+   mullvad relay set obfuscation mode quic
+   ```
+
+3. **Disable if not needed**
+   ```bash
+   mullvad relay set obfuscation mode off
+   ```
+
+4. **Select closer server**: Reduce geographic distance
+
+### Obfuscation Detected and Blocked
+
+If network detects and blocks obfuscation:
+
+1. **Try Shadowsocks**: More sophisticated obfuscation
+2. **Use multihop**: Adds additional layer of complexity
+3. **Change ports frequently**: Avoid pattern detection
+4. **Combine with DAITA**: Additional traffic obfuscation
+
+## Security Considerations
+
+### Obfuscation vs. Encryption
+
+<Warning>
+**Important distinction:**
+- **Obfuscation**: Makes traffic *look* like something else (appearance)
+- **Encryption**: Makes traffic *unreadable* (confidentiality)
+
+Obfuscation does NOT provide additional security beyond bypassing detection.
+</Warning>
+
+### Additional Encryption Layers
+
+Some methods add encryption:
+- **Shadowsocks**: ChaCha20-Poly1305 encryption on top of WireGuard
+- **QUIC**: TLS 1.3 encryption on top of WireGuard
+- **udp2tcp / LWO**: No additional encryption, just encapsulation
+
+All methods maintain WireGuard's strong encryption.
+
+## Best Practices
+
+### Choosing the Right Method
+
+<Tabs>
+  <Tab title="General Blocking">
+    Start with **Automatic** mode:
+    ```bash
+    mullvad relay set obfuscation mode auto
+    ```
+  </Tab>
+  
+  <Tab title="Sophisticated DPI">
+    Use **Shadowsocks**:
+    ```bash
+    mullvad relay set obfuscation mode shadowsocks
+    ```
+  </Tab>
+  
+  <Tab title="UDP Blocked">
+    Use **UDP-over-TCP** port 443:
+    ```bash
+    mullvad relay set obfuscation mode udp2tcp port 443
+    ```
+  </Tab>
+  
+  <Tab title="Performance Critical">
+    Try **LWO** first, then QUIC:
+    ```bash
+    mullvad relay set obfuscation mode lwo
+    ```
+  </Tab>
+</Tabs>
+
+### Testing Strategy
+
+1. **Test without obfuscation first**: Establish baseline
+2. **Try automatic mode**: Let app choose
+3. **Test specific methods**: If automatic fails
+4. **Document what works**: For future reference
+
+### Operational Security
+
+- **Don't advertise**: Don't publicly share which method works in your location
+- **Vary methods**: Occasionally change to avoid pattern detection
+- **Combine features**: Use with multihop for additional obfuscation
+
+## Related Features
+
+- [WireGuard Protocol](/features/wireguard) - Base protocol being obfuscated
+- [Multihop](/features/multihop) - Applies obfuscation to entry hop
+- [DAITA](/features/daita) - Traffic analysis protection (complementary)
+- [Quantum-Resistant Tunnels](/features/quantum-resistant) - Works with all obfuscation methods
+
+## Technical Resources
+
+- [Shadowsocks Protocol](https://shadowsocks.org/)
+- [QUIC Protocol (RFC 9000)](https://datatracker.ietf.org/doc/html/rfc9000)
+- [TCP-over-TCP Problem](https://sites.inka.de/bigred/devel/tcp-tcp.html)
+- [Mullvad's Obfuscation Implementation](https://github.com/mullvad/mullvadvpn-app/tree/main/tunnel-obfuscation)

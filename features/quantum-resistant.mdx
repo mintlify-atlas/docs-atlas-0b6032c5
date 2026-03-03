@@ -1,0 +1,264 @@
+---
+title: 'Quantum-Resistant Tunnels'
+description: 'Post-quantum cryptography using ephemeral pre-shared keys (PSK) to protect against future quantum computer attacks'
+---
+
+## Overview
+
+Quantum-resistant tunnels add an additional layer of encryption to WireGuard connections using post-quantum cryptography. This protects your VPN traffic from potential future attacks by quantum computers that could break current encryption algorithms.
+
+Mullvad implements quantum resistance through **ephemeral pre-shared keys (PSK)** negotiated using post-quantum key encapsulation mechanisms (KEM).
+
+<Note>
+Quantum-resistant tunnels are available on all platforms: Windows, Linux, macOS, Android, and iOS.
+</Note>
+
+## How It Works
+
+### Traditional WireGuard Encryption
+
+Standard WireGuard uses:
+- **Curve25519**: Elliptic curve cryptography for key exchange
+- **ChaCha20-Poly1305**: Symmetric encryption
+
+These algorithms are secure today but could potentially be broken by quantum computers in the future.
+
+### Quantum-Resistant Enhancement
+
+Mullvad adds a quantum-resistant layer:
+
+1. **Post-Quantum KEM**: Generates ephemeral key pairs using post-quantum algorithms
+2. **PSK Exchange**: Securely negotiates a pre-shared key with the relay server
+3. **WireGuard PSK**: The negotiated key is used as WireGuard's pre-shared key field
+4. **Hybrid Security**: Combined classical (Curve25519) + post-quantum cryptography
+
+```
+┌─────────────────────────────────────────────────────┐
+│   Application Data (Your Internet Traffic)          │
+└─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│   WireGuard Encryption (ChaCha20-Poly1305)          │
+│   + Pre-Shared Key (Post-Quantum)                   │
+└─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│   Curve25519 Key Exchange (Classical)               │
+└─────────────────────────────────────────────────────┘
+```
+
+<Info>
+This "hybrid" approach provides security even if either the classical or post-quantum algorithm is compromised.
+</Info>
+
+## Key Exchange Process
+
+### Ephemeral PSK Negotiation
+
+The PSK is never persisted to disk and is regenerated for each tunnel:
+
+1. **Key Generation**: Client generates post-quantum KEM key pairs
+2. **Request**: Client sends public key to relay server via TLS 1.3
+3. **Encapsulation**: Server generates shared secret and encapsulates it
+4. **Response**: Server returns encapsulated secret
+5. **Decapsulation**: Client decapsulates to derive shared secret
+6. **PSK Derivation**: Shared secret becomes WireGuard PSK
+
+<Warning>
+The PSK is stored in memory only and is never written to disk. It's automatically zeroized when the tunnel is torn down.
+</Warning>
+
+## Enabling Quantum-Resistant Tunnels
+
+### Using the GUI
+
+<Steps>
+  <Step title="Open Settings">
+    Launch Mullvad VPN and navigate to **Settings** → **VPN settings**
+  </Step>
+  
+  <Step title="Enable Quantum Resistance">
+    Find the **Quantum-resistant tunnel** option and toggle it **On**
+  </Step>
+  
+  <Step title="Reconnect">
+    The app will automatically reconnect with quantum-resistant encryption enabled
+  </Step>
+</Steps>
+
+### Using the CLI
+
+```bash
+# Enable quantum-resistant tunnels
+mullvad relay set tunnel wireguard quantum-resistant on
+
+# Disable quantum-resistant tunnels
+mullvad relay set tunnel wireguard quantum-resistant off
+
+# Check current setting
+mullvad relay get
+```
+
+### Verify It's Active
+
+When connected with quantum resistance enabled:
+
+```bash
+mullvad status -v
+```
+
+You should see:
+```
+Connected to ...
+Quantum resistant: yes
+```
+
+The connection panel in the GUI will also display a quantum resistance indicator.
+
+## Performance Impact
+
+### Connection Establishment
+
+- **Slight increase in connection time**: Additional PSK negotiation adds ~100-200ms
+- **Key generation**: Post-quantum key pair generation takes a few milliseconds
+
+### Ongoing Connection
+
+- **No throughput impact**: Once established, performance is identical to standard WireGuard
+- **No additional CPU overhead**: PSK is used in existing WireGuard encryption
+
+<Info>
+The performance impact is minimal and only affects the initial connection. Once connected, there's no difference in speed or bandwidth.
+</Info>
+
+## Security Properties
+
+### Threat Model
+
+ Quantum-resistant tunnels protect against:
+
+- **Store-now-decrypt-later attacks**: Adversaries recording encrypted traffic today to decrypt with future quantum computers
+- **Future quantum cryptanalysis**: Breaks in classical ECC algorithms
+
+### Cryptographic Algorithms
+
+Mullvad uses NIST-approved post-quantum algorithms for KEM:
+
+- Post-quantum key encapsulation mechanisms
+- Hybrid construction combining classical and post-quantum security
+
+### Limitations
+
+<Warning>
+**Does not protect against:**
+- Traffic analysis (see [DAITA](/features/daita))
+- Correlation attacks on VPN servers
+- Compromise of the Mullvad service itself
+- Local device compromise
+</Warning>
+
+## Compatibility with Other Features
+
+Quantum-resistant tunnels work with:
+
+- ✅ [WireGuard multihop](/features/multihop)
+- ✅ [DAITA](/features/daita)
+- ✅ [Obfuscation protocols](/features/obfuscation) (TCP, Shadowsocks, QUIC)
+- ✅ [Split tunneling](/features/split-tunneling)
+- ✅ [Custom DNS](/features/custom-dns)
+- ✅ [Content blockers](/features/content-blockers)
+
+### Example: Quantum-Resistant Multihop
+
+```bash
+# Enable quantum resistance with multihop
+mullvad relay set tunnel wireguard quantum-resistant on
+mullvad relay set tunnel wireguard use-multihop on
+```
+
+## Technical Details
+
+### PSK Storage
+
+From the source code (talpid-types/src/net/wireguard.rs:295-306):
+
+```rust
+/// A WireGuard preshared key (PSK). Used to make the tunnel quantum-resistant.
+#[derive(Clone, PartialEq, Eq, Hash, Zeroize, ZeroizeOnDrop)]
+pub struct PresharedKey(Box<[u8; 32]>);
+```
+
+- PSK is 32 bytes (256 bits)
+- Automatically zeroized on drop (secure memory cleanup)
+- Never serialized or deserialized to disk
+
+### Key Rotation
+
+PSKs are ephemeral:
+- New PSK negotiated for each tunnel connection
+- PSK is discarded when tunnel disconnects
+- No persistent key storage
+
+## Troubleshooting
+
+### Connection Failures
+
+If quantum-resistant connections fail:
+
+1. **Check server support**: Ensure selected relay supports quantum resistance
+2. **Network connectivity**: PSK exchange requires API connectivity
+3. **Firewall rules**: Ensure HTTPS (443) to Mullvad API is allowed
+4. **Temporary disable**: Try disabling quantum resistance to isolate the issue
+
+### Verification
+
+```bash
+# Check if quantum resistance is active
+mullvad status -v | grep -i quantum
+
+# View tunnel configuration
+mullvad relay get
+```
+
+## Migration from Legacy Settings
+
+Older Mullvad versions used `use_pq_safe_psk` setting:
+- Automatically migrated to `quantum_resistant` in newer versions
+- `auto` setting means enabled by default
+- Settings persist across app updates
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Maximum Security">
+    Enable all quantum-resistant features:
+    ```bash
+    mullvad relay set tunnel wireguard quantum-resistant on
+    mullvad relay set tunnel wireguard use-multihop on
+    mullvad tunnel set tunnel wireguard daita on
+    ```
+  </Tab>
+  
+  <Tab title="Performance Optimized">
+    Enable quantum resistance without multihop:
+    ```bash
+    mullvad relay set tunnel wireguard quantum-resistant on
+    mullvad relay set tunnel wireguard use-multihop off
+    ```
+  </Tab>
+</Tabs>
+
+## Further Reading
+
+- [Mullvad's Post-Quantum Blog Announcement](https://mullvad.net/en/blog/tag/post-quantum)
+- [NIST Post-Quantum Cryptography Standardization](https://csrc.nist.gov/projects/post-quantum-cryptography)
+- [WireGuard PSK Documentation](https://www.wireguard.com/)
+
+## Related Features
+
+- [WireGuard Protocol](/features/wireguard) - Base VPN protocol
+- [Multihop](/features/multihop) - Route through multiple servers
+- [DAITA](/features/daita) - Defeat traffic analysis
+- [Obfuscation](/features/obfuscation) - Bypass VPN blocking

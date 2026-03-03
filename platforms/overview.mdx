@@ -1,0 +1,169 @@
+---
+title: Platform Overview
+description: Comprehensive comparison of Mullvad VPN across all supported platforms
+---
+
+Mullvad VPN is available across multiple platforms, providing privacy-focused VPN protection on all your devices. Each platform implementation is tailored to the operating system while maintaining consistent security standards.
+
+## Supported Platforms
+
+Mullvad VPN supports the following platforms:
+
+<CardGroup cols={2}>
+  <Card title="Desktop" icon="desktop" href="/platforms/desktop">
+    Windows, macOS, and Linux with full-featured GUI and CLI
+  </Card>
+  <Card title="Android" icon="android" href="/platforms/android">
+    Native Android app with VPN Service API integration
+  </Card>
+  <Card title="iOS" icon="apple" href="/platforms/ios">
+    Native iOS app for iPhone and iPad
+  </Card>
+  <Card title="Command Line" icon="terminal" href="/platforms/cli">
+    Powerful CLI for automation and advanced users
+  </Card>
+</CardGroup>
+
+## Platform Support Matrix
+
+### Operating System Versions
+
+These are the officially supported operating system versions. The app may work on other versions, but quality and security are only guaranteed for these:
+
+| Platform | Supported Versions |
+|----------|-------------------|
+| Windows | 10 and 11 |
+| macOS | The three latest major releases |
+| Linux (Ubuntu) | The two latest LTS releases and the latest non-LTS releases |
+| Linux (Fedora) | Versions not yet [EOL](https://fedoraproject.org/wiki/End_of_life) |
+| Linux (Debian) | 12 and newer |
+| Android | 8 and newer |
+| iOS | 17.0 and newer |
+
+<Note>
+  On Linux, testing is performed using the Gnome desktop environment. Other desktop environments should work but are not regularly tested.
+</Note>
+
+## Feature Comparison
+
+This table shows feature availability across all platforms:
+
+| Feature | Windows | Linux | macOS | Android | iOS |
+|---------|:-------:|:-----:|:-----:|:-------:|:---:|
+| WireGuard | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Quantum-resistant tunnels | ✓ | ✓ | ✓ | ✓ | ✓ |
+| [DAITA](https://mullvad.net/en/blog/introducing-defense-against-ai-guided-traffic-analysis-daita) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| WireGuard multihop | ✓ | ✓ | ✓ | ✓ | ✓ |
+| WireGuard over TCP | ✓ | ✓ | ✓ | ✓ | ✓ |
+| WireGuard over Shadowsocks | ✓ | ✓ | ✓ | ✓ | ✓ |
+| WireGuard over QUIC | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Lightweight WireGuard Obfuscation (LWO) | ✓ | ✓ | ✓ | ✓ | - |
+| Split tunneling | ✓ | ✓ | ✓ | ✓ | - |
+| Custom DNS server | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Content blockers (Ads, etc.) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Optional local network access | ✓ | ✓ | ✓ | ✓ | ✓* |
+| Externally audited | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+<Info>
+  *On iOS, the local network is always accessible with the current implementation.
+</Info>
+
+## Architecture Differences
+
+### Desktop Platforms
+
+Desktop platforms (Windows, macOS, Linux) share a common architecture:
+
+- **System Service**: `mullvad-daemon` runs as a system service with administrator/root privileges
+- **GUI**: Electron-based graphical interface for user interaction
+- **CLI**: Command-line interface (`mullvad`) for automation and scripting
+- **Firewall Integration**: Direct integration with platform firewalls (WFP on Windows, PF on macOS, nftables on Linux)
+- **Atomic Transactions**: All firewall rule changes are applied atomically, preventing leak windows
+
+### Mobile Platforms
+
+#### Android
+
+Android uses the VPN Service API for both tunnel creation and leak protection:
+
+- **VPN Service API**: Routes all traffic through the app using `0/0` and `::0/0` routes
+- **No Direct Firewall Access**: Security relies on the OS-provided VPN Service API
+- **Shared Daemon**: Uses the same `mullvad-daemon` as desktop for tunnel management
+- **System Restrictions**: Some traffic is exempt by the system (connectivity checks, NTP, hotspot)
+
+#### iOS
+
+iOS has a completely standalone implementation:
+
+- **Packet Tunnel Extension**: Handles network packet flow through the VPN
+- **WireGuard-go**: Direct integration with wireguard-go for tunnel implementation
+- **Network Extension Framework**: Uses iOS Network Extension framework for VPN management
+- **Simplified Feature Set**: Some features like LWO and split tunneling are not available
+
+## Security Features by Platform
+
+### Kill Switch
+
+All platforms include an always-on kill switch that prevents network leaks:
+
+- **Desktop**: Enforced through firewall rules that block non-VPN traffic
+- **Android**: Implemented via VPN Service API routing
+- **iOS**: Managed through packet tunnel extension
+
+### Lockdown Mode
+
+Lockdown mode blocks all network access when disconnected:
+
+- **Desktop**: Full support via firewall rules
+- **Android**: Supported via VPN Service API
+- **iOS**: Supported through network extension configuration
+
+### DNS Leak Protection
+
+All platforms ensure DNS queries only go through the VPN tunnel:
+
+- **Desktop**: Enforced through system DNS configuration and firewall rules
+- **Android**: Managed via VPN Service API DNS settings
+- **iOS**: Configured through network extension DNS settings
+
+## Distribution Channels
+
+### Desktop
+
+- [Mullvad Website](https://mullvad.net/download/)
+- [GitHub Releases](https://github.com/mullvad/mullvadvpn-app/releases)
+- Platform-specific package managers (for Linux)
+
+### Android
+
+- [Google Play Store](https://play.google.com/store/apps/details?id=net.mullvad.mullvadvpn)
+- [F-Droid](https://f-droid.org/packages/net.mullvad.mullvadvpn/)
+- [Mullvad Website](https://mullvad.net/download/android/)
+- [GitHub Releases](https://github.com/mullvad/mullvadvpn-app/releases)
+
+### iOS
+
+- [Apple App Store](https://apps.apple.com/us/app/mullvad-vpn/id1488466513)
+
+<Warning>
+  The iOS app source code is GPL-3 licensed, but the distributed app on the Apple App Store falls under the [Apple App Store EULA](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/).
+</Warning>
+
+## Next Steps
+
+Choose your platform to learn more:
+
+<CardGroup cols={2}>
+  <Card title="Desktop Setup" icon="desktop" href="/platforms/desktop">
+    Install and configure Mullvad VPN on Windows, macOS, or Linux
+  </Card>
+  <Card title="Android Setup" icon="android" href="/platforms/android">
+    Get started with Mullvad VPN on Android devices
+  </Card>
+  <Card title="iOS Setup" icon="apple" href="/platforms/ios">
+    Install and use Mullvad VPN on iPhone or iPad
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/platforms/cli">
+    Master the command-line interface for advanced control
+  </Card>
+</CardGroup>

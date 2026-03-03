@@ -1,0 +1,536 @@
+---
+title: Management Interface
+description: The gRPC-based management interface for daemon-frontend communication
+---
+
+## Overview
+
+The management interface is the primary communication channel between the Mullvad daemon (system service) and the various frontends (GUI, CLI, Android app, iOS app). It uses gRPC with Protocol Buffers for efficient, type-safe, bidirectional communication.
+
+Reference: `mullvad-management-interface/proto/management_interface.proto`
+
+## Architecture
+
+### Transport Layer
+
+The management interface uses different transport mechanisms depending on the platform:
+
+- **Desktop (Windows, Linux, macOS)**: Unix domain socket or named pipe
+- **Android**: JNI (Java Native Interface) bridge
+- **iOS**: Direct integration (standalone implementation)
+
+### Protocol
+
+The interface uses Protocol Buffers v3 with gRPC for:
+
+- Type safety and schema validation
+- Efficient binary serialization
+- Language-agnostic interface definitions
+- Automatic client/server code generation
+- Built-in streaming support
+
+## Service Definition
+
+```protobuf
+service ManagementService {
+  // Control and get tunnel state
+  rpc ConnectTunnel(google.protobuf.Empty) returns (google.protobuf.BoolValue) {}
+  rpc DisconnectTunnel(google.protobuf.StringValue) returns (google.protobuf.BoolValue) {}
+  rpc ReconnectTunnel(google.protobuf.Empty) returns (google.protobuf.BoolValue) {}
+  rpc GetTunnelState(google.protobuf.Empty) returns (TunnelState) {}
+
+  // Control the daemon and receive events
+  rpc EventsListen(google.protobuf.Empty) returns (stream DaemonEvent) {}
+  
+  // ... (80+ additional RPC methods)
+}
+```
+
+Reference: `mullvad-management-interface/proto/management_interface.proto:10-153`
+
+## Core RPC Categories
+
+### 1. Tunnel Control
+
+Manage VPN tunnel state and configuration:
+
+```protobuf
+rpc ConnectTunnel(google.protobuf.Empty) returns (google.protobuf.BoolValue) {}
+rpc DisconnectTunnel(google.protobuf.StringValue) returns (google.protobuf.BoolValue) {}
+rpc ReconnectTunnel(google.protobuf.Empty) returns (google.protobuf.BoolValue) {}
+rpc GetTunnelState(google.protobuf.Empty) returns (TunnelState) {}
+```
+
+**TunnelState** message includes:
+- Current state (Disconnected, Connecting, Connected, Disconnecting, Error)
+- Relay information (endpoint, location, protocol)
+- Feature indicators (quantum resistance, multihop, obfuscation, etc.)
+- Error details if applicable
+
+Reference: `management_interface.proto:290-313`
+
+### 2. Event Streaming
+
+Frontends subscribe to real-time daemon events:
+
+```protobuf
+rpc EventsListen(google.protobuf.Empty) returns (stream DaemonEvent) {}
+```
+
+**DaemonEvent** streams:
+- Tunnel state changes
+- Settings updates
+- Relay list updates
+- Version information
+- Device events (login, logout, revoked)
+- Access method changes
+- Leak detection alerts
+
+Reference: `management_interface.proto:729-740`
+
+### 3. Settings Management
+
+Comprehensive settings configuration:
+
+```protobuf
+rpc GetSettings(google.protobuf.Empty) returns (Settings) {}
+rpc ResetSettings(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc SetAllowLan(google.protobuf.BoolValue) returns (google.protobuf.Empty) {}
+rpc SetLockdownMode(google.protobuf.BoolValue) returns (google.protobuf.Empty) {}
+rpc SetAutoConnect(google.protobuf.BoolValue) returns (google.protobuf.Empty) {}
+rpc SetWireguardMtu(google.protobuf.UInt32Value) returns (google.protobuf.Empty) {}
+rpc SetEnableIpv6(google.protobuf.BoolValue) returns (google.protobuf.Empty) {}
+rpc SetQuantumResistantTunnel(QuantumResistantState) returns (google.protobuf.Empty) {}
+rpc SetEnableDaita(google.protobuf.BoolValue) returns (google.protobuf.Empty) {}
+rpc SetDnsOptions(DnsOptions) returns (google.protobuf.Empty) {}
+```
+
+Reference: `management_interface.proto:40-56`
+
+### 4. Relay Configuration
+
+Relay and tunnel constraint management:
+
+```protobuf
+rpc UpdateRelayLocations(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc GetRelayLocations(google.protobuf.Empty) returns (RelayList) {}
+rpc SetRelaySettings(RelaySettings) returns (google.protobuf.Empty) {}
+rpc SetObfuscationSettings(ObfuscationSettings) returns (google.protobuf.Empty) {}
+```
+
+**RelaySettings** supports:
+- Location constraints (country, city, hostname)
+- Provider filtering
+- Ownership constraints (Mullvad-owned vs rented)
+- WireGuard-specific constraints (IP version, multihop, entry location)
+- Custom relay configurations
+
+Reference: `management_interface.proto:551-583`
+
+### 5. Account Management
+
+Account and authentication operations:
+
+```protobuf
+rpc CreateNewAccount(google.protobuf.Empty) returns (google.protobuf.StringValue) {}
+rpc LoginAccount(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc LogoutAccount(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc GetAccountData(google.protobuf.StringValue) returns (AccountData) {}
+rpc GetAccountHistory(google.protobuf.Empty) returns (AccountHistory) {}
+rpc SubmitVoucher(google.protobuf.StringValue) returns (VoucherSubmission) {}
+rpc GetWwwAuthToken(google.protobuf.Empty) returns (google.protobuf.StringValue) {}
+```
+
+Reference: `management_interface.proto:58-66`
+
+### 6. Device Management
+
+Multi-device account management:
+
+```protobuf
+rpc GetDevice(google.protobuf.Empty) returns (DeviceState) {}
+rpc UpdateDevice(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc ListDevices(google.protobuf.StringValue) returns (DeviceList) {}
+rpc RemoveDevice(DeviceRemoval) returns (google.protobuf.Empty) {}
+```
+
+**DeviceState** tracks:
+- Current state (LoggedIn, LoggedOut, Revoked)
+- Device ID and name
+- WireGuard public key
+- Creation timestamp
+
+Reference: `management_interface.proto:68-72`, `807-815`
+
+### 7. WireGuard Key Management
+
+Automatic key rotation and management:
+
+```protobuf
+rpc SetWireguardRotationInterval(google.protobuf.Duration) returns (google.protobuf.Empty) {}
+rpc ResetWireguardRotationInterval(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc RotateWireguardKey(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc GetWireguardKey(google.protobuf.Empty) returns (PublicKey) {}
+```
+
+Reference: `management_interface.proto:75-78`
+
+### 8. Custom Lists
+
+User-defined relay groupings:
+
+```protobuf
+rpc CreateCustomList(NewCustomList) returns (google.protobuf.StringValue) {}
+rpc DeleteCustomList(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc UpdateCustomList(CustomList) returns (google.protobuf.Empty) {}
+rpc ClearCustomLists(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+```
+
+**CustomList** allows:
+- Named relay collections
+- Geographic location specifications
+- Quick access to favorite relay combinations
+
+Reference: `management_interface.proto:80-84`, `435-446`
+
+### 9. API Access Methods
+
+Censorship circumvention configuration:
+
+```protobuf
+rpc AddApiAccessMethod(NewAccessMethodSetting) returns (UUID) {}
+rpc RemoveApiAccessMethod(UUID) returns (google.protobuf.Empty) {}
+rpc SetApiAccessMethod(UUID) returns (google.protobuf.Empty) {}
+rpc UpdateApiAccessMethod(AccessMethodSetting) returns (google.protobuf.Empty) {}
+rpc GetCurrentApiAccessMethod(google.protobuf.Empty) returns (AccessMethodSetting) {}
+rpc TestCustomApiAccessMethod(CustomProxy) returns (google.protobuf.BoolValue) {}
+```
+
+Supports:
+- Direct TLS connections
+- Mullvad bridges (Shadowsocks)
+- Encrypted DNS proxy
+- Custom SOCKS5/Shadowsocks proxies
+
+See [API Communication](/architecture/components/api-communication) for details.
+
+Reference: `management_interface.proto:86-94`
+
+### 10. Split Tunneling
+
+Platform-specific split tunneling control:
+
+**Linux (process-based):**
+```protobuf
+rpc GetSplitTunnelProcesses(google.protobuf.Empty) returns (stream google.protobuf.Int32Value) {}
+rpc AddSplitTunnelProcess(google.protobuf.Int32Value) returns (google.protobuf.Empty) {}
+rpc RemoveSplitTunnelProcess(google.protobuf.Int32Value) returns (google.protobuf.Empty) {}
+```
+
+**Windows, macOS, Android (app-based):**
+```protobuf
+rpc AddSplitTunnelApp(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc RemoveSplitTunnelApp(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc SetSplitTunnelState(google.protobuf.BoolValue) returns (google.protobuf.Empty) {}
+```
+
+Reference: `management_interface.proto:99-115`
+
+### 11. App Upgrade
+
+In-app update management:
+
+```protobuf
+rpc AppUpgrade(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc AppUpgradeAbort(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc AppUpgradeEventsListen(google.protobuf.Empty) returns (stream AppUpgradeEvent) {}
+rpc GetVersionInfo(google.protobuf.Empty) returns (AppVersionInfo) {}
+```
+
+Upgrade events include:
+- Download starting/progress
+- Verifying installer
+- Completion or errors
+
+Reference: `management_interface.proto:145-149`, `155-182`
+
+## Communication Patterns
+
+### Request-Response
+
+Most operations use simple request-response:
+
+1. Frontend sends RPC request
+2. Daemon processes asynchronously
+3. Daemon returns response when complete
+
+**Example**: Connecting to tunnel
+```
+Frontend -> ConnectTunnel() -> Daemon
+Daemon processes relay selection, tunnel setup
+Daemon -> BoolValue(true) -> Frontend
+```
+
+### Server Streaming
+
+Long-lived connections for real-time updates:
+
+**EventsListen** provides continuous state updates:
+```
+Frontend -> EventsListen() -> Daemon
+Daemon -> TunnelState(Connecting) -> Frontend
+Daemon -> TunnelState(Connected) -> Frontend
+Daemon -> Settings(updated) -> Frontend
+... (stream remains open) ...
+```
+
+Multiple clients can subscribe simultaneously, allowing GUI, CLI, and other tools to monitor daemon state concurrently.
+
+## Error Handling
+
+### Tunnel Errors
+
+The `ErrorState` message provides detailed error information:
+
+```protobuf
+message ErrorState {
+  enum Cause {
+    AUTH_FAILED = 0;
+    IPV6_UNAVAILABLE = 1;
+    SET_FIREWALL_POLICY_ERROR = 2;
+    SET_DNS_ERROR = 3;
+    START_TUNNEL_ERROR = 4;
+    CREATE_TUNNEL_DEVICE = 5;
+    TUNNEL_PARAMETER_ERROR = 6;
+    IS_OFFLINE = 7;
+    NOT_PREPARED = 8;              // Android only
+    OTHER_ALWAYS_ON_APP = 9;       // Android only
+    INVALID_DNS_SERVERS = 11;      // Android only
+    SPLIT_TUNNEL_ERROR = 12;
+    NEED_FULL_DISK_PERMISSIONS = 13; // macOS only
+  }
+  // ... detailed error fields ...
+}
+```
+
+Reference: `management_interface.proto:207-288`
+
+### Authentication Errors
+
+```protobuf
+enum AuthFailedError {
+  UNKNOWN = 0;
+  INVALID_ACCOUNT = 1;
+  EXPIRED_ACCOUNT = 2;
+  TOO_MANY_CONNECTIONS = 3;
+}
+```
+
+Reference: `management_interface.proto:231-236`
+
+### Relay Selection Errors
+
+```protobuf
+enum GenerationError {
+  NO_MATCHING_RELAY_ENTRY = 0;
+  NO_MATCHING_RELAY_EXIT = 1;
+  NO_MATCHING_RELAY = 2;
+  NO_MATCHING_BRIDGE_RELAY = 3;
+  CUSTOM_TUNNEL_HOST_RESOLUTION_ERROR = 4;
+}
+```
+
+Reference: `management_interface.proto:238-245`
+
+## Feature Indicators
+
+The management interface tracks active features:
+
+```protobuf
+enum FeatureIndicator {
+  QUANTUM_RESISTANCE = 0;
+  MULTIHOP = 1;
+  SPLIT_TUNNELING = 2;
+  LOCKDOWN_MODE = 3;
+  WIREGUARD_PORT = 4;
+  UDP_2_TCP = 5;
+  SHADOWSOCKS = 6;
+  QUIC = 7;
+  LWO = 8;
+  LAN_SHARING = 9;
+  DNS_CONTENT_BLOCKERS = 10;
+  CUSTOM_DNS = 11;
+  SERVER_IP_OVERRIDE = 12;
+  CUSTOM_MTU = 13;
+  DAITA = 14;
+  DAITA_MULTIHOP = 15;
+}
+```
+
+These indicators are included in tunnel state messages, allowing frontends to display active features to users.
+
+Reference: `management_interface.proto:332-349`
+
+## Platform-Specific Operations
+
+### Android
+
+```protobuf
+// Google Play payment integration
+rpc InitPlayPurchase(google.protobuf.Empty) returns (PlayPurchasePaymentToken) {}
+rpc VerifyPlayPurchase(PlayPurchase) returns (google.protobuf.Empty) {}
+```
+
+Reference: `management_interface.proto:117-119`
+
+### macOS
+
+```protobuf
+// Check TCC (Transparency, Consent, and Control) permissions
+rpc NeedFullDiskPermissions(google.protobuf.Empty) returns (google.protobuf.BoolValue) {}
+```
+
+Reference: `management_interface.proto:121-122`
+
+### Windows
+
+```protobuf
+// Volume monitoring for split tunneling
+rpc CheckVolumes(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+```
+
+Reference: `management_interface.proto:124-126`
+
+## Settings Persistence
+
+Settings can be managed individually or via JSON patches:
+
+```protobuf
+// Apply a JSON blob to the settings
+// See docs/settings-patch-format.md for format description
+rpc ApplyJsonSettings(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc ExportJsonSettings(google.protobuf.Empty) returns (google.protobuf.StringValue) {}
+```
+
+This allows bulk settings updates and configuration import/export.
+
+Reference: `management_interface.proto:128-132`
+
+## Implementation
+
+### Server Side
+
+The daemon implements the `ManagementService` in Rust:
+
+```rust
+// mullvad-daemon/src/management_interface.rs
+impl ManagementService for ManagementInterfaceServer {
+    async fn connect_tunnel(&self, _: Request<()>) -> Result<Response<bool>, Status> {
+        // Forward to daemon command handler
+        self.send_command_to_daemon(DaemonCommand::Connect).await
+    }
+    
+    async fn events_listen(&self, _: Request<()>) -> Result<Response<Self::EventsListenStream>, Status> {
+        // Create event stream for this client
+        let event_stream = self.subscribe_daemon_events();
+        Ok(Response::new(event_stream))
+    }
+    // ... other RPC implementations ...
+}
+```
+
+Reference: `mullvad-daemon/src/management_interface.rs`
+
+### Client Side
+
+**Desktop GUI** (Electron/TypeScript):
+```typescript
+import { connectTunnel } from './grpc-client';
+
+await connectTunnel();
+```
+
+**CLI** (Rust):
+```rust
+use mullvad_management_interface::ManagementServiceClient;
+
+let mut client = ManagementServiceClient::connect(socket_path).await?;
+client.connect_tunnel(()).await?;
+```
+
+Reference: `mullvad-cli/src/cmds/`
+
+## Asynchronous Design
+
+### Non-Blocking Operations
+
+The management interface is designed to never block:
+
+- All RPC handlers run asynchronously
+- Commands are queued to the daemon's actor system
+- Responses are sent when operations complete
+- No RPC can block another RPC from being processed
+
+This prevents deadlocks and ensures responsive frontend behavior even during long-running operations.
+
+Reference: From `architecture.md:21-33`
+
+### Actor System
+
+The daemon uses an actor-based architecture:
+- Each component runs independently
+- Communication via message passing
+- No shared mutable state between actors
+- Management interface acts as entry point for external commands
+
+## Security Considerations
+
+### Access Control
+
+**Desktop**: Socket permissions restrict access to appropriate user/group
+- Unix domain socket with restrictive file permissions
+- Only local processes can connect
+
+**Android**: JNI bridge provides isolation
+- No network exposure
+- App sandbox prevents unauthorized access
+
+### Input Validation
+
+All RPC inputs are validated:
+- Protocol Buffers ensures type safety
+- Additional validation in RPC handlers
+- Malformed requests rejected before processing
+
+## Debugging and Monitoring
+
+### Logging
+
+```protobuf
+rpc SetLogFilter(LogFilter) returns (google.protobuf.Empty) {}
+rpc LogListen(google.protobuf.Empty) returns (stream LogMessage) {}
+```
+
+Allows runtime log level adjustment and log streaming.
+
+Reference: `management_interface.proto:151-152`
+
+### Relay Override
+
+For testing and debugging:
+
+```protobuf
+rpc SetRelayOverride(RelayOverride) returns (google.protobuf.Empty) {}
+rpc ClearAllRelayOverrides(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+rpc DisableRelay(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+rpc EnableRelay(google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+```
+
+Reference: `management_interface.proto:54-55`, `138-139`
+
+## Related Documentation
+
+- [Mullvad vs Talpid Layers](/architecture/components/mullvad-vs-talpid)
+- [Relay Selector](/architecture/components/relay-selector)
+- [API Communication](/architecture/components/api-communication)
+- [Relay Selector Service](/architecture/components/relay-selector#relay-selector-service) (partition API)

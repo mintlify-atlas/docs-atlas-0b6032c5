@@ -1,0 +1,262 @@
+---
+title: Leak Protection Mechanisms
+description: How Mullvad VPN prevents traffic leaks in all scenarios and states
+---
+
+Mullvad VPN implements comprehensive leak protection to ensure no unencrypted traffic leaves your device when the VPN is active. The app uses multiple layers of protection across different platforms.
+
+## Firewall-Based Leak Protection
+
+The primary leak protection mechanism on desktop platforms is tight integration with the system firewall:
+
+- **Windows**: Windows Filtering Platform (WFP)
+- **macOS**: Packet Filter (PF)
+- **Linux**: nftables
+
+These firewalls enforce strict rules that only allow traffic through the encrypted VPN tunnel or to the VPN server endpoint itself.
+
+<Note>
+All firewall rule changes are applied as **atomic transactions**. There is no time window where rules are inconsistent or invalid during changes.
+</Note>
+
+## State-Based Leak Protection
+
+The tunnel state machine enforces different leak protection rules based on the current state:
+
+### Disconnected State
+
+- **Default behavior**: No firewall rules, traffic flows freely
+- **With lockdown mode**: Blocks all traffic (behaves like Error state)
+- This state is only active when the user explicitly disconnects
+
+<Warning>
+The Disconnected state is NOT active during server changes or unexpected tunnel failures. Those scenarios use the Connecting or Error states, which have strict blocking rules.
+</Warning>
+
+### Connecting State
+
+**What's Allowed:**
+- Traffic to the VPN server IP+port+protocol combination
+- Only from privileged processes (prevents fingerprinting)
+- Responses to outgoing tunnel establishment traffic
+
+**What's Blocked:**
+- All other traffic is blocked
+- DNS requests are blocked
+- Regular application traffic is blocked
+
+**Process Restrictions:**
+- **Windows**: Only binaries in specific paths (e.g., `mullvad-daemon.exe`)
+- **macOS**: Only processes running as `root`
+- **Linux**: Only processes with firewall mark `0x6d6f6c65` or running as `root`
+
+These restrictions prevent unprivileged programs from leaking packets to the VPN server IP, as those packets could be fingerprinted by an attacker.
+
+### Connected State
+
+**What's Allowed:**
+- All traffic in both directions over the tunnel interface
+- Traffic to/from the VPN server IP+port+protocol
+- DNS to the relay gateway IP or custom DNS servers (inside tunnel)
+
+**What's Blocked:**
+- DNS requests not to the tunnel gateway or custom servers
+- Any traffic not going through the tunnel interface
+
+<Note>
+DNS leak protection ensures all DNS queries go through the tunnel to the VPN relay server or configured custom DNS servers. This prevents your ISP from seeing your DNS queries.
+</Note>
+
+### Disconnecting State
+
+- Maintains the security policy from the previous state
+- Does not apply its own rules
+- Short transition state while tunnel closes cleanly
+
+### Error State
+
+**What's Blocked:**
+- All traffic except the always-allowed exceptions
+- DNS requests are blocked
+- Regular application traffic is blocked
+
+**Purpose:**
+- Active when tunnel cannot be established (expired account, offline, internal errors)
+- Prevents accidental leaks when tunnel fails
+- Requires explicit user disconnect to unlock
+
+<Warning>
+If firewall integration fails in the Error state, the app informs the user of the serious situation. Without functioning firewall rules, the app cannot prevent leaks.
+</Warning>
+
+## Always-Allowed Traffic
+
+Certain traffic is allowed regardless of state (required for basic network functionality):
+
+### Loopback Traffic
+All traffic on loopback adapters (`127.0.0.1`, `::1`) is always allowed.
+
+### DHCP (IPv4 and IPv6)
+Required for network configuration:
+
+**DHCPv4:**
+- Outgoing UDP: `*:68` → `255.255.255.255:67` (client to server)
+- Incoming UDP: `*:67` → `*:68` (server to client)
+
+**DHCPv6:**
+- Outgoing UDP: `[fe80::]/10:546` → `[ff02::1:2]:547` and `[ff05::1:3]:547`
+- Incoming UDP: `[fe80::]/10:547` → `[fe80::]/10:546`
+
+### Neighbor Discovery Protocol (NDP)
+A subset of IPv6 NDP is allowed:
+
+- **Router Solicitation** (ICMPv6 type 133): Outgoing to `ff02::2`
+- **Router Advertisement** (ICMPv6 type 134): Incoming from `fe80::/10`
+- **Redirect** (ICMPv6 type 137): Incoming from `fe80::/10`
+- **Neighbor Solicitation** (ICMPv6 type 135): Bidirectional to/from link-local
+- **Neighbor Advertisement** (ICMPv6 type 136): Bidirectional to/from link-local
+
+### Mullvad API Access
+The firewall allows traffic to the Mullvad API in all states:
+
+- **Connected state**: API traffic only allowed inside the tunnel
+- **Other states**: API traffic bypasses firewall for key updates and account management
+- **Windows**: Only Mullvad service and problem report tool can reach API in blocking states
+- **macOS/Linux**: All processes running as root can reach API in blocking states
+
+## Allow LAN Feature
+
+When the "Allow LAN" setting is enabled, additional traffic is permitted:
+
+**Private IP Ranges (Outgoing and Incoming):**
+- `10.0.0.0/8`
+- `172.16.0.0/12`
+- `192.168.0.0/16`
+- `169.254.0.0/16` (Link-local IPv4)
+- `fe80::/10` (Link-local IPv6)
+- `fc00::/7` (Unique local address)
+
+**Multicast Addresses (Outgoing Only):**
+- `224.0.0.0/24` (Local subnet IPv4 multicast)
+- `239.0.0.0/8` (Administratively scoped IPv4 multicast - SSDP, mDNS)
+- `255.255.255.255/32` (Local network broadcasts)
+- `ff01::/16` (Interface-local IPv6 multicast)
+- `ff02::/16` (Link-local IPv6 multicast)
+- `ff03::/16` (Realm-local IPv6 multicast)
+- `ff04::/16` (Admin-local IPv6 multicast)
+- `ff05::/16` (Site-local IPv6 multicast)
+
+**DHCPv4 Server (Incoming Requests, Outgoing Responses):**
+- Incoming UDP: `*:68` → `255.255.255.255:67`
+- Outgoing UDP: `*:67` → `*:68`
+
+## DNS Leak Protection
+
+DNS leaks are particularly dangerous as they reveal your browsing activity. Mullvad implements strict DNS leak protection:
+
+### Default DNS Behavior
+- All DNS requests must go through the VPN tunnel
+- Queries only allowed to the VPN relay server gateway IP
+- DNS to any other address is blocked in the Connected state
+
+### Custom DNS Servers
+Users can configure custom DNS servers:
+- Custom DNS queries still go through the tunnel
+- Exception: Private IP ranges (`192.168.0.0/16`, etc.) bypass the tunnel
+- Exception: Loopback addresses (`127.0.0.1`, `::1`) bypass the tunnel
+
+### DNS in Different States
+- **Connected**: Queries to tunnel gateway or custom DNS servers only
+- **Disconnected**: System default DNS (typically from ISP)
+- **Other states**: DNS is blocked entirely
+
+<Warning>
+In the Disconnected state (when VPN is explicitly off), the app does nothing with DNS. Your ISP's default DNS will be used. Enable lockdown mode if you want DNS blocked when disconnected.
+</Warning>
+
+## Platform-Specific Leak Protection
+
+### Linux Packet Forwarding
+
+On Linux, situations that permit incoming or outgoing traffic also allow that traffic to be forwarded. All other forward traffic is rejected. This prevents the device from acting as a router that could leak traffic.
+
+### Windows Boot-Time Protection
+
+Windows may add persistent firewall filters when the service exits if a blocking policy should continue:
+
+- Blocks traffic before the service starts during boot
+- Active before the Base Filtering Engine (BFE) service starts
+- Applied when lockdown mode or auto-connect is enabled
+
+### Linux Early-Boot Protection
+
+Due to dependencies on other services, `mullvad-daemon` doesn't start early enough to prevent boot-time leaks. A separate system unit:
+
+- Starts during early boot
+- Applies a blocking policy
+- Persists until `mullvad-daemon` is started and takes over
+
+### macOS Boot-Time Limitations
+
+<Warning>
+macOS does not allow system services to specify dependencies or start order. There is no known way to force `mullvad-daemon` to start before the network is configured. A potential leak window exists during macOS boot.
+</Warning>
+
+See [known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md) for details.
+
+## Mobile Platform Limitations
+
+### Android Leak Protection
+
+Android uses the VPN Service API to route all traffic through the app:
+
+- Routes `0/0` and `::0/0` force all traffic through Mullvad
+- "Block connections without VPN" system setting provides additional OS-level protection
+- Blocks all traffic in connecting, disconnecting, and error states
+
+**Android System Exemptions:**
+
+Some traffic is exempt by Android itself and will leak:
+
+<Warning>
+- **Connectivity checks**: DNS lookups and HTTP(S) connections
+- **Network time (NTP)**: Time synchronization traffic  
+- **Hotspot traffic**: To/from hotspot clients
+
+These exemptions occur even with "Block connections without VPN" enabled. This is an Android limitation that Mullvad cannot prevent.
+</Warning>
+
+Mullvad has reported these issues to Google:
+- [Incorrect VPN lockdown documentation](https://issuetracker.google.com/issues/249990229)
+- [Request to disable connectivity checks with VPN lockdown](https://issuetracker.google.com/issues/250529027)
+
+Technical users can [manually disable connectivity checks](https://mullvad.net/help/configure-connectivity-checks-on-android).
+
+**Android Incoming Connections:**
+
+Android does not block incoming connections through the VPN. However, this is low severity—the device must actively expose a service for there to be anything to connect to.
+
+### iOS Leak Protection
+
+iOS uses a packet tunnel extension that:
+
+- Configures routing rules so all traffic flows through the tunnel
+- Delegates traffic handling to WireGuard-go
+- Works directly with the tun interface
+- Similar approach to Android but with different implementation
+
+## Testing for Leaks
+
+To verify leak protection is working:
+
+1. **DNS leak tests**: Visit [dnsleaktest.com](https://dnsleaktest.com) or [mullvad.net/check](https://mullvad.net/check)
+2. **IP leak tests**: Visit [mullvad.net/check](https://mullvad.net/check) to verify your exit IP
+3. **Connection monitoring**: Watch for unexpected connections in your OS firewall logs
+4. **Packet capture**: Use Wireshark to verify no unencrypted traffic leaves your device
+
+## Related Documentation
+
+- [Kill Switch](/security/kill-switch) - Always-on protection during connection issues
+- [Tunnel States](/security/tunnel-states) - State machine and security guarantees  
+- [Firewall Integration](/security/firewall) - Platform-specific firewall implementation
+- [Security Overview](/security/overview) - High-level security architecture

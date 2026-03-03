@@ -1,0 +1,625 @@
+---
+title: API Communication
+description: How the Mullvad VPN client communicates with api.mullvad.net and circumvents censorship
+---
+
+## Overview
+
+The Mullvad VPN daemon communicates with `api.mullvad.net` for account management, relay list updates, version checks, and other operations. To ensure API reachability even in censored networks, the client supports multiple access methods including direct connections, Shadowsocks bridges, and custom proxies.
+
+Reference: `mullvad-daemon/src/api.rs`, `docs/architecture.md:48-62`
+
+## API Endpoints
+
+The daemon interacts with Mullvad's REST API for:
+
+- **Account operations**: Create account, login, check expiry, submit vouchers
+- **Device management**: Register devices, rotate WireGuard keys, list/remove devices
+- **Relay list updates**: Download current relay and bridge server lists
+- **Version checks**: Check for app updates and security advisories
+- **GeoIP lookups**: Determine current location and verify tunnel connectivity
+- **Problem reports**: Submit diagnostic logs (with user consent)
+
+## Access Methods
+
+The client supports multiple methods to reach the API, automatically selected based on availability and user configuration.
+
+### 1. Direct TLS Connection
+
+**Default method**: Standard HTTPS connection to `api.mullvad.net`.
+
+```
+Client --[TLS/HTTPS]--> api.mullvad.net
+```
+
+**Characteristics:**
+- Fastest and most reliable when available
+- Uses standard TLS 1.3
+- No additional overhead
+- May be blocked in censored networks
+
+Reference: `mullvad-daemon/src/api.rs:54`
+
+### 2. Mullvad Bridges (Shadowsocks)
+
+**Censorship-resistant**: Routes API traffic through Shadowsocks proxies hosted on Mullvad bridge servers.
+
+```
+Client --[Shadowsocks]--> Mullvad Bridge --[TLS/HTTPS]--> api.mullvad.net
+```
+
+**How it works:**
+
+1. Client requests bridge server from relay selector
+2. Relay selector chooses Shadowsocks-enabled bridge
+3. All API traffic proxied through bridge
+4. Bridge forwards to actual API endpoint
+
+**Configuration:**
+
+```protobuf
+message AccessMethod {
+  message Bridges {}
+  oneof access_method {
+    Bridges bridges = 2;
+  }
+}
+```
+
+Reference: `mullvad-daemon/src/api.rs:55-63`, `management_interface.proto:478-488`
+
+**Shadowsocks details:**
+
+```protobuf
+message ShadowsocksEndpointData {
+  uint32 port = 1;
+  string cipher = 2;
+  string password = 3;
+  TransportProtocol protocol = 4;  // TCP or UDP
+}
+```
+
+Bridge servers provide Shadowsocks endpoints with:
+- Cipher: Encryption algorithm (e.g., `chacha20-ietf-poly1305`)
+- Password: Shared secret for authentication
+- Protocol: TCP or UDP transport
+
+Reference: `management_interface.proto:766-771`
+
+### 3. Encrypted DNS Proxy
+
+**Domain fronting**: Uses encrypted DNS protocols to obfuscate API connections.
+
+```
+Client --[DoH/DoT]--> Encrypted DNS Proxy --[TLS/HTTPS]--> api.mullvad.net
+```
+
+**How it works:**
+
+1. Client fetches encrypted DNS proxy configs from `frakta.eu`
+2. Connects using DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT)
+3. DNS proxy forwards requests to actual API
+4. Appears as DNS traffic to network observers
+
+**Implementation:**
+
+```rust
+// mullvad-daemon/src/api.rs:64-78
+AccessMethod::BuiltIn(BuiltInAccessMethod::EncryptedDnsProxy) => {
+    if let Err(error) = self
+        .encrypted_dns_proxy_cache
+        .fetch_configs("frakta.eu")
+        .await
+    {
+        log::warn!("Failed to fetch new Encrypted DNS Proxy configurations");
+    }
+    let Some(edp) = self.encrypted_dns_proxy_cache.next_configuration() else {
+        return None;
+    };
+    ApiConnectionMode::Proxied(ProxyConfig::from(edp))
+}
+```
+
+Reference: `mullvad-daemon/src/api.rs:64-78`
+
+### 4. Custom Proxies
+
+Users can configure custom SOCKS5 or Shadowsocks proxies.
+
+**SOCKS5 (Local):**
+
+```protobuf
+message Socks5Local {
+  string remote_ip = 1;
+  uint32 remote_port = 2;
+  TransportProtocol remote_transport_protocol = 3;
+  uint32 local_port = 4;
+}
+```
+
+Local SOCKS5 proxy running on the same machine.
+
+Reference: `management_interface.proto:448-453`
+
+**SOCKS5 (Remote):**
+
+```protobuf
+message Socks5Remote {
+  string ip = 1;
+  uint32 port = 2;
+  SocksAuth auth = 3;
+}
+
+message SocksAuth {
+  string username = 1;
+  string password = 2;
+}
+```
+
+Remote SOCKS5 proxy with optional authentication.
+
+Reference: `management_interface.proto:454-462`
+
+**Shadowsocks (Custom):**
+
+```protobuf
+message Shadowsocks {
+  string ip = 1;
+  uint32 port = 2;
+  string password = 3;
+  string cipher = 4;
+}
+```
+
+Custom Shadowsocks server configuration.
+
+Reference: `management_interface.proto:463-468`
+
+## Access Method Selection
+
+The daemon uses an `AccessMethodResolver` to dynamically select the appropriate access method.
+
+### Resolution Process
+
+```rust
+// mullvad-daemon/src/api.rs:47-96
+impl AccessMethodResolver for DaemonAccessMethodResolver {
+    async fn resolve_access_method_setting(
+        &mut self,
+        access_method: &AccessMethod,
+    ) -> Option<(AllowedEndpoint, ApiConnectionMode)> {
+        let connection_mode = match access_method {
+            AccessMethod::BuiltIn(BuiltInAccessMethod::Direct) => 
+                ApiConnectionMode::Direct,
+            AccessMethod::BuiltIn(BuiltInAccessMethod::Bridge) => {
+                let bridge = self.relay_selector.get_bridge_forced()?;
+                ApiConnectionMode::Proxied(ProxyConfig::from(bridge))
+            }
+            AccessMethod::BuiltIn(BuiltInAccessMethod::EncryptedDnsProxy) => {
+                let edp = self.encrypted_dns_proxy_cache.next_configuration()?;
+                ApiConnectionMode::Proxied(ProxyConfig::from(edp))
+            }
+            AccessMethod::Custom(config) => {
+                ApiConnectionMode::Proxied(ProxyConfig::from(config.clone()))
+            }
+        };
+        // ... resolve endpoint ...
+    }
+}
+```
+
+Reference: `mullvad-daemon/src/api.rs:26-96`
+
+### Access Method Priority
+
+The client maintains a list of access methods with priorities:
+
+```protobuf
+message ApiAccessMethodSettings {
+  AccessMethodSetting direct = 1;
+  AccessMethodSetting mullvad_bridges = 2;
+  AccessMethodSetting encrypted_dns_proxy = 3;
+  repeated AccessMethodSetting custom = 4;
+}
+```
+
+Each method can be enabled/disabled:
+
+```protobuf
+message AccessMethodSetting {
+  UUID id = 1;
+  string name = 2;
+  bool enabled = 3;
+  AccessMethod access_method = 4;
+}
+```
+
+Reference: `management_interface.proto:503-508`, `490-495`
+
+### Automatic Failover
+
+When an API request fails:
+
+1. Current access method is marked as potentially unavailable
+2. Next enabled access method is tried
+3. Process repeats until success or all methods exhausted
+4. Failed requests can trigger access method testing
+
+### Testing Access Methods
+
+Users can test access methods before using them:
+
+```protobuf
+rpc TestCustomApiAccessMethod(CustomProxy) returns (google.protobuf.BoolValue) {}
+rpc TestApiAccessMethodById(UUID) returns (google.protobuf.BoolValue) {}
+```
+
+Tests verify:
+- Proxy connectivity
+- API reachability through proxy
+- Authentication success
+
+Reference: `management_interface.proto:93-94`
+
+## API Availability Monitoring
+
+The daemon continuously monitors API availability:
+
+```rust
+use mullvad_api::availability::ApiAvailability;
+```
+
+**Monitoring includes:**
+- Periodic connectivity checks
+- Request success/failure tracking
+- Automatic access method switching
+- Exponential backoff on repeated failures
+
+Reference: `mullvad-daemon/src/lib.rs:46`
+
+## Firewall Integration
+
+API traffic must be allowed even when the tunnel is not connected.
+
+### Allowed Endpoints
+
+The firewall receives a list of allowed endpoints for API communication:
+
+```rust
+use talpid_types::net::AllowedEndpoint;
+
+pub fn resolve_allowed_endpoint(
+    connection_mode: &ApiConnectionMode,
+    fallback: SocketAddr,
+) -> AllowedEndpoint {
+    // Determine which endpoints need firewall exclusions
+}
+```
+
+Reference: `mullvad-daemon/src/api.rs:98-100`
+
+### Tunnel State Coordination
+
+The API runtime coordinates with the tunnel state machine:
+
+- In secured states (Connecting, Connected, Error), only API traffic allowed outside tunnel
+- In disconnected state, broader internet access may be permitted (depending on lockdown mode)
+- API endpoint changes communicated to firewall in real-time
+
+**Important**: No actor should block on API requests if the tunnel state machine relies on that actor to change states - this prevents deadlocks.
+
+Reference: `docs/architecture.md:55-58`
+
+## Request Management
+
+### Asynchronous Operations
+
+All API requests are asynchronous:
+
+```rust
+use mullvad_api::rest::MullvadRestHandle;
+
+let api_handle = MullvadRestHandle::new(/* ... */);
+let account_data = api_handle.get_account_data(account_token).await?;
+```
+
+### Request Cancellation
+
+API requests can be dropped in flight:
+
+- When tunnel connects, API connection resets
+- Allows switching between access methods
+- Ensures API uses current endpoint configuration
+
+Reference: `docs/architecture.md:59-61`
+
+### Offline State Handling
+
+When the device is offline:
+
+- API requests are blocked/queued
+- Prevents wasted connection attempts
+- Resumes when connectivity restored
+
+See [Offline Detection](/architecture/components/offline-detection) for details.
+
+Reference: `docs/architecture.md:61-62`
+
+## Address Caching
+
+The API client caches the resolved IP address of `api.mullvad.net`:
+
+```rust
+use mullvad_api::{AddressCache, FileAddressCacheBacking};
+
+let address_cache = AddressCache::<FileAddressCacheBacking>::new(cache_path)?;
+let api_addr = address_cache.get_address().await;
+```
+
+**Purpose:**
+- Reduces DNS lookup failures
+- Enables API access when DNS is blocked/unreliable
+- Periodically refreshed when DNS is available
+
+Reference: `mullvad-daemon/src/api.rs:9,29,36`
+
+## Connection Modes
+
+### Direct Mode
+
+```rust
+enum ApiConnectionMode {
+    Direct,
+    // ...
+}
+```
+
+Direct TLS connection to cached or resolved API address.
+
+### Proxied Mode
+
+```rust
+enum ApiConnectionMode {
+    Proxied(ProxyConfig),
+}
+
+enum ProxyConfig {
+    Shadowsocks(ShadowsocksConfig),
+    Socks(SocksConfig),
+}
+```
+
+Proxied through configured proxy server.
+
+Reference: `mullvad-api/src/proxy.rs`
+
+## API Client Implementation
+
+The API client is implemented in the `mullvad-api` crate:
+
+```
+mullvad-api/
+├── src/
+│   ├── lib.rs              # Main API client
+│   ├── rest.rs             # REST request handling
+│   ├── proxy.rs            # Proxy configuration
+│   ├── access_mode.rs      # Access method resolution
+│   └── availability.rs     # Availability monitoring
+```
+
+### Request Flow
+
+1. **Daemon initiates request**: `api_handle.get_relay_list().await`
+2. **Access method resolution**: Select appropriate access method
+3. **Endpoint resolution**: Determine IP address and port
+4. **Firewall configuration**: Ensure endpoint is allowed
+5. **HTTP request**: Execute via direct or proxied connection
+6. **Response processing**: Parse and return data
+7. **Error handling**: Retry or failover on errors
+
+## Censorship Resistance Strategies
+
+### Traffic Obfuscation
+
+Different access methods provide varying levels of obfuscation:
+
+- **Direct**: Standard TLS - easily identifiable
+- **Shadowsocks**: Encrypted proxy protocol - hard to detect
+- **Encrypted DNS Proxy**: Masquerades as DNS traffic - very hard to block without breaking DNS
+- **Custom SOCKS5**: Depends on proxy configuration
+
+### Domain Fronting
+
+Encrypted DNS Proxy uses domain fronting:
+
+- TLS SNI shows innocent domain (`frakta.eu`)
+- Actual API requests hidden in encrypted payload
+- Difficult to block without blocking entire domain
+
+### Port Variability
+
+Multiple ports supported for each method:
+
+- Shadowsocks: Range of ports from relay list
+- UDP2TCP: Ports 80, 443, 5001
+- QUIC: Port 443
+- Harder to block all ports without false positives
+
+## Security Considerations
+
+### TLS Certificate Validation
+
+All API connections validate TLS certificates:
+
+- Pinned certificate or standard CA validation
+- Prevents man-in-the-middle attacks
+- Even when using proxies, end-to-end TLS maintained
+
+### Proxy Trust Model
+
+**Mullvad bridges:**
+- Operated by Mullvad
+- Same trust as Mullvad relays
+- API requests encrypted end-to-end
+
+**Custom proxies:**
+- User-provided
+- TLS still protects API requests
+- Proxy sees encrypted traffic only
+
+### Authentication
+
+API requests authenticated via:
+
+- Account tokens (for account operations)
+- Device tokens (for device-specific operations)
+- OAuth tokens (for web authentication)
+
+Tokens transmitted over TLS only.
+
+## Management Interface Integration
+
+### Configuration
+
+Access methods managed via gRPC:
+
+```protobuf
+rpc AddApiAccessMethod(NewAccessMethodSetting) returns (UUID) {}
+rpc RemoveApiAccessMethod(UUID) returns (google.protobuf.Empty) {}
+rpc SetApiAccessMethod(UUID) returns (google.protobuf.Empty) {}
+rpc UpdateApiAccessMethod(AccessMethodSetting) returns (google.protobuf.Empty) {}
+rpc GetCurrentApiAccessMethod(google.protobuf.Empty) returns (AccessMethodSetting) {}
+```
+
+Reference: `management_interface.proto:86-92`
+
+### Events
+
+Access method changes broadcast to frontends:
+
+```protobuf
+message DaemonEvent {
+  oneof event {
+    AccessMethodSetting new_access_method = 7;
+    // ...
+  }
+}
+```
+
+Reference: `management_interface.proto:729-740`
+
+## Bridge Server List
+
+Separate from relay list, bridge servers are dedicated to API access:
+
+```protobuf
+message BridgeList {
+  repeated Bridge bridges = 1;
+  BridgeEndpointData endpoint_data = 2;
+}
+
+message Bridge {
+  string hostname = 1;
+  string ipv4_addr_in = 2;
+  optional string ipv6_addr_in = 3;
+  bool active = 4;
+  fixed64 weight = 5;
+  Location location = 6;
+}
+```
+
+Reference: `management_interface.proto:748-761`
+
+### Bridge Endpoint Data
+
+```protobuf
+message BridgeEndpointData {
+  repeated ShadowsocksEndpointData shadowsocks = 1;
+}
+```
+
+All bridges provide Shadowsocks endpoints with standardized configuration.
+
+Reference: `management_interface.proto:764`
+
+## Debugging and Testing
+
+### Access Method Testing
+
+Test individual access methods before relying on them:
+
+```bash
+mullvad api access-method test <method-id>
+```
+
+Verifies:
+- Proxy connectivity
+- API reachability
+- Authentication
+
+### Current Access Method
+
+Check which method is currently active:
+
+```bash
+mullvad api access-method get-current
+```
+
+### Forced Access Method
+
+Override automatic selection:
+
+```bash
+mullvad api access-method set <method-id>
+```
+
+## Error Recovery
+
+### Request Retry Logic
+
+Failed API requests trigger:
+
+1. Immediate retry with same access method
+2. Switch to next access method on repeated failure
+3. Exponential backoff between attempts
+4. Circuit breaker after extended failures
+
+### Access Method Rotation
+
+Periodic rotation ensures:
+
+- Dead access methods are discovered
+- New methods are tested
+- Best-performing method is used
+
+## Performance Optimization
+
+### Connection Reuse
+
+HTTP connections are reused when possible:
+
+- Connection pooling for repeated requests
+- Reduced TLS handshake overhead
+- Lower latency for consecutive requests
+
+### Caching
+
+- Relay lists cached locally (refreshed periodically)
+- Account data cached (refreshed on access)
+- Address cache reduces DNS lookups
+
+### Parallel Requests
+
+Multiple independent API requests can run concurrently:
+
+- Relay list updates don't block account checks
+- Version checks run in background
+- No artificial serialization
+
+## Related Documentation
+
+- [Management Interface](/architecture/components/management-interface)
+- [Relay Selector](/architecture/components/relay-selector)
+- [Mullvad vs Talpid Layers](/architecture/components/mullvad-vs-talpid)
+- [Offline Detection](/architecture/components/offline-detection)
+- [Architecture Overview](/docs/architecture.md) (source repository)

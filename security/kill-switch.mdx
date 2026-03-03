@@ -1,0 +1,357 @@
+---
+title: Kill Switch & Lockdown Mode
+description: Understanding Mullvad's always-on kill switch and lockdown mode feature
+---
+
+Mullvad VPN has an **always-on kill switch** that ensures no traffic leaks outside the VPN tunnel when the VPN is active. This page explains how it works and the difference between the kill switch and lockdown mode.
+
+## What is a Kill Switch?
+
+A kill switch is a security feature that blocks internet traffic if the VPN connection drops unexpectedly. This prevents your real IP address and unencrypted traffic from leaking when the tunnel fails.
+
+<Warning>
+Mullvad's kill switch is **always on and cannot be disabled**. There is no setting to turn it off. This is a deliberate security design.
+</Warning>
+
+## How Mullvad's Kill Switch Works
+
+Mullvad's kill switch is fundamentally different from traditional kill switches:
+
+### Traditional Kill Switches
+
+Traditional VPN kill switches are reactive:
+
+- A "red button" engaged when a problem arises
+- Waits for tunnel failure to detect and respond
+- May have a time window between failure and blocking
+- Can be disabled by the user
+
+### Mullvad's Proactive Approach
+
+Mullvad's kill switch is **proactive and always active**:
+
+<Note>
+The kill switch is not a separate feature—it's built into the core security architecture through the tunnel state machine and firewall integration.
+</Note>
+
+**How it works:**
+
+1. **Immediate activation**: Strict firewall rules are applied the moment the app leaves the Disconnected state
+2. **Maintained continuously**: Rules stay active until the app returns to Disconnected via explicit user action
+3. **Atomic transactions**: Firewall rules are updated atomically with no vulnerable time windows
+4. **Fail closed**: If the tunnel fails, packets are blocked rather than allowed to leak
+
+The kill switch is essentially the fact that the [Connecting](/security/tunnel-states#connecting), [Disconnecting](/security/tunnel-states#disconnecting), and [Error](/security/tunnel-states#error) states prevent leaks via firewall rules.
+
+## Kill Switch in Different States
+
+The kill switch behavior depends on the tunnel state:
+
+### Disconnected State
+
+- **Default**: No firewall rules applied, traffic flows freely
+- **With lockdown mode**: Kill switch active, all traffic blocked
+- This state is only active when the user explicitly disconnects
+
+<Note>
+The Disconnected state is NOT active during server changes, reconnections, or unexpected tunnel failures. Those use Connecting or Error states where the kill switch is active.
+</Note>
+
+### Connecting State
+
+**Kill switch is ACTIVE:**
+
+- Blocks all traffic except connection to VPN server
+- Only privileged processes can reach the VPN server IP
+- Prevents leaks during tunnel establishment
+- Active until tunnel is verified working
+
+### Connected State  
+
+**Kill switch is ACTIVE:**
+
+- All traffic must go through the tunnel
+- Traffic not using the tunnel interface is blocked
+- DNS requests to non-tunnel addresses are blocked
+- Prevents leaks even if tunnel is active
+
+### Disconnecting State
+
+**Kill switch is ACTIVE:**
+
+- Maintains security policy from previous state
+- Short transition while tunnel closes cleanly
+- Prevents leaks during shutdown process
+
+### Error State
+
+**Kill switch is ACTIVE:**
+
+- Blocks all traffic (except always-allowed traffic)
+- Active when tunnel cannot be established
+- Requires explicit user disconnect to unlock
+
+See [Tunnel States](/security/tunnel-states) for detailed information about each state.
+
+## Atomic Firewall Transactions
+
+A critical aspect of Mullvad's kill switch is atomic rule updates:
+
+<Note>
+All firewall rule changes are applied as atomic transactions. There is **no time window** where rules are inconsistent, missing, or invalid during state transitions.
+</Note>
+
+**What this means:**
+
+- All new rules are prepared before any old rules are removed
+- The switch from old to new rules happens instantaneously  
+- No gap exists where traffic could leak
+- True on all desktop platforms (Windows WFP, macOS PF, Linux nftables)
+
+## Scenarios Where Kill Switch Activates
+
+The kill switch automatically protects you in these scenarios:
+
+### Server Changes
+
+When you change VPN servers:
+
+1. App transitions to Connecting state
+2. Kill switch blocks all non-VPN traffic
+3. New tunnel is established
+4. Only then does traffic flow through new server
+
+**No leak window exists between servers.**
+
+### Unexpected Tunnel Loss
+
+If the tunnel connection drops unexpectedly:
+
+1. App detects tunnel is down
+2. Transitions to Connecting (to reconnect) or Error state
+3. Kill switch blocks all traffic  
+4. Either reconnects or waits for user action
+
+**No traffic leaks during reconnection attempts.**
+
+### Network Changes
+
+When you switch networks (WiFi → Ethernet, different WiFi, etc.):
+
+1. Tunnel may need to reconnect
+2. Kill switch remains active during reconnection
+3. No traffic flows until new tunnel is established
+
+**Your real IP on the new network is not exposed.**
+
+### Settings Changes
+
+When you change settings that affect the tunnel:
+
+1. Tunnel may need to restart
+2. Kill switch protects during the restart
+3. New settings applied only when tunnel is ready
+
+**No leaks occur during configuration changes.**
+
+### System Sleep/Wake
+
+When your device sleeps and wakes:
+
+1. Tunnel may need to reconnect
+2. Kill switch blocks traffic until reconnected  
+3. Offline monitor prevents wasted reconnection attempts
+
+**No traffic leaks while reconnecting after wake.**
+
+## Lockdown Mode
+
+Lockdown mode is often confused with the kill switch, but they are different features:
+
+<Warning>
+Lockdown mode is NOT the kill switch. The kill switch is always on. Lockdown mode only affects behavior in the Disconnected state.
+</Warning>
+
+### What Lockdown Mode Does
+
+Lockdown mode changes how the Disconnected state behaves:
+
+**Without lockdown mode (default):**
+- Disconnected state allows traffic to flow freely
+- No firewall rules applied
+- Normal internet access without VPN
+
+**With lockdown mode enabled:**  
+- Disconnected state blocks all traffic (like Error state)
+- Firewall rules remain active
+- No internet access without VPN
+
+### When to Use Lockdown Mode
+
+Enable lockdown mode if you want to:
+
+- **Never communicate outside the VPN**: Device can only access internet through VPN tunnel
+- **Eliminate Disconnected state risk**: Ensures you can't accidentally use internet without VPN
+- **Binary internet choice**: Either VPN or no internet at all
+
+<Note>
+Lockdown mode does NOT protect you during reconnections or server changes—the always-on kill switch already does that. Lockdown mode only prevents internet access when you've explicitly disconnected.
+</Note>
+
+### Lockdown Mode Settings
+
+To enable lockdown mode:
+
+1. Open Mullvad VPN app
+2. Go to Settings
+3. Enable "Lockdown mode" or "Block when disconnected"
+
+When enabled:
+- Disconnected state will block all traffic
+- You must connect to VPN to access the internet
+- Kill switch remains active in all other states as usual
+
+## Boot-Time and Shutdown Protection
+
+The kill switch also protects during system boot and shutdown:
+
+### Boot-Time Protection
+
+**Windows:**
+
+Persistent WFP filters block traffic before `mullvad-daemon` starts:
+
+- Active before Base Filtering Engine (BFE) starts
+- Applied when lockdown mode or auto-connect is enabled
+- Prevents leaks during system boot
+- Removed once `mullvad-daemon` takes over
+
+**Linux:**
+
+Separate early-boot systemd unit applies blocking nftables rules:
+
+- Starts before network initialization
+- Blocks all traffic until `mullvad-daemon` starts
+- Applied when lockdown mode or auto-connect is enabled
+- Prevents leaks during boot process
+
+**macOS:**
+
+<Warning>
+macOS does not allow controlling service start order. There is no way to guarantee `mullvad-daemon` starts before the network is configured. A potential boot-time leak window exists on macOS.
+</Warning>
+
+This is a known limitation. See [known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md).
+
+### Shutdown Protection
+
+When the daemon exits, it maintains blocking firewall rules if:
+
+- **Lockdown mode is enabled**, OR
+- User didn't explicitly request shutdown AND either:
+  - Daemon is currently in blocking state (Connected, Connecting, Error), OR  
+  - Auto-connect is enabled
+
+In other cases (normal user-requested shutdown), firewall rules are removed.
+
+This prevents leaks during system shutdown when VPN should remain active.
+
+## What Kill Switch Allows
+
+Even with the kill switch active, certain traffic is always allowed:
+
+### Required System Traffic
+
+- **Loopback traffic**: `127.0.0.1`, `::1`
+- **DHCP**: For network configuration (IPv4 and IPv6)
+- **NDP**: IPv6 Neighbor Discovery Protocol subset
+
+### VPN-Related Traffic
+
+- **VPN server connection**: Traffic to establish and maintain tunnel
+- **Mullvad API**: For key rotation, account checks, relay list updates
+
+### Optional Traffic
+
+- **Allow LAN traffic**: If enabled, local network communication is allowed
+- **Split tunneling**: If configured, excluded apps bypass the tunnel
+
+See [Leak Protection](/security/leak-protection) for complete details.
+
+## Testing the Kill Switch
+
+You can test that the kill switch is working:
+
+### Test 1: Disable VPN in Connecting State
+
+1. Disconnect from VPN
+2. Configure an invalid VPN server (if possible via config)
+3. Try to connect
+4. While in Connecting state, try to access the internet
+5. **Expected**: No internet access, all connections fail
+
+### Test 2: Kill VPN Process
+
+1. Connect to VPN
+2. Verify you have internet access and VPN IP
+3. Kill the VPN tunnel process (varies by platform)  
+4. Immediately try to access the internet
+5. **Expected**: No internet access until tunnel reconnects
+
+<Warning>
+Be careful when testing—you may lose internet access until you reconnect the VPN or explicitly disconnect.
+</Warning>
+
+### Test 3: Network Change
+
+1. Connect to VPN on WiFi
+2. Switch to Ethernet or different WiFi
+3. Monitor for any traffic leaks during the switch
+4. **Expected**: No leaks, tunnel reconnects automatically
+
+Use packet capture tools like Wireshark to verify no unencrypted traffic leaves your device.
+
+## Kill Switch Failure Scenarios
+
+In rare cases, the kill switch could fail:
+
+### Firewall Integration Failure
+
+If the firewall integration fails (e.g., unable to apply rules):
+
+- App will inform the user of the serious situation
+- Without functioning firewall rules, the app cannot prevent leaks  
+- User should investigate the issue or reinstall the app
+
+<Warning>
+If you see a firewall failure error, take it seriously. The kill switch cannot protect you without working firewall rules.
+</Warning>
+
+### Platform Limitations
+
+Some platforms have inherent limitations:
+
+- **macOS boot-time leaks**: Service start order cannot be controlled
+- **Android system exemptions**: Connectivity checks, NTP, hotspot traffic bypass VPN
+- **Mobile platform limitations**: No direct firewall access, rely on VPN Service APIs
+
+See [Leak Protection](/security/leak-protection) for platform-specific limitations.
+
+## Comparison with Other VPNs
+
+How Mullvad's kill switch compares:
+
+| Feature | Mullvad | Typical VPN |
+|---------|---------|-------------|
+| Always on | ✅ Yes, cannot disable | ❌ Optional, can disable |
+| Proactive | ✅ Active before connection | ❌ Reactive after failure |
+| Atomic updates | ✅ No vulnerable time windows | ⚠️ Varies by implementation |
+| Built into architecture | ✅ Core security feature | ⚠️ Often separate add-on |
+| Boot-time protection | ✅ Yes (Windows/Linux) | ❌ Rarely implemented |
+
+## Related Documentation
+
+- [Leak Protection](/security/leak-protection) - Comprehensive leak prevention mechanisms
+- [Tunnel States](/security/tunnel-states) - State machine and when kill switch is active  
+- [Firewall Integration](/security/firewall) - How firewall rules are implemented
+- [Security Overview](/security/overview) - High-level security architecture

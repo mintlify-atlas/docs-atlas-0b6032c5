@@ -1,0 +1,337 @@
+---
+title: Known Issues and Limitations
+description: Current security, privacy, and technical issues affecting the Mullvad VPN app
+icon: triangle-exclamation
+---
+
+This document lists known issues affecting the Mullvad VPN app that cannot be easily fixed or have been decided not to address.
+
+<Warning>
+This is NOT a bug tracker or feature request list. This documents issues that:
+- Are caused by OS bugs we cannot mitigate
+- Have fixes with unacceptable drawbacks
+- Cannot be reliably reproduced
+- Are intentional trade-offs
+</Warning>
+
+## Security & Privacy Issues
+
+### macOS: Potential Leaks After Boot
+
+**Issue:** Traffic may leak for a short period after macOS boots, even with auto-connect enabled.
+
+**Cause:** macOS `launchd` provides no way to specify service dependencies. The `mullvad-daemon` may start after other network services.
+
+**Affected Versions:** All Mullvad app versions on all macOS versions
+
+**User Mitigations:**
+- Disable network before shutdown so the system boots without network access
+- Wait to verify Mullvad is connected before launching sensitive applications
+- Don't start programs generating sensitive traffic until tunnel is verified
+
+**Timeline:**
+- **September 2022:** Discovered during internal testing
+- **October 2022:** Disclosed in [Atredis security audit](https://mullvad.net/blog/security-audit-report-for-our-app-available)
+
+---
+
+### iOS: Vulnerable to TunnelVision/TunnelCrack LocalNet
+
+**Issue:** iOS app is vulnerable to TunnelVision (CVE-2024-3661) and TunnelCrack LocalNet (CVE-2023-36672, CVE-2023-35838) attacks.
+
+**Cause:** iOS `includeAllNetworks` flag is required to block these attacks but is incompatible with current app implementation.
+
+**Affected Versions:** All iOS app versions on all iOS versions
+
+**Status:** Work in progress to enable `includeAllNetworks` flag
+
+**Timeline:**
+- **August 9, 2023:** [TunnelCrack blog post](https://mullvad.net/blog/response-to-tunnelcrack-vulnerability-disclosure)
+- **May 7, 2024:** [TunnelVision blog post](https://mullvad.net/blog/evaluating-the-impact-of-tunnelvision)
+
+---
+
+### Android: Temporary Leaks During Reconnection
+
+**Issue:** Android may leak traffic for short periods while reconfiguring the VPN tunnel (reconnecting, switching servers, etc.).
+
+**Leaked Traffic Types:**
+- VPN app's own traffic (API requests)
+- DNS lookups using `getaddrinfo()`
+- Private DNS (DNS-over-TLS)
+- OS connectivity checks
+
+**Affected Versions:** All Android versions
+
+**Notes:**
+- Leaks can occur even with "Block connections without VPN" enabled
+- Multiple upstream bug reports exist, but issues persist
+- No known mitigation available
+
+**Related Issues:**
+- [Packets leak at VPN reconnection](https://issuetracker.google.com/issues/37343051)
+- [No seamless routing transition](https://issuetracker.google.com/issues/117288570)
+- [Private DNS breaks VPN](https://issuetracker.google.com/issues/141674015)
+- [Seamless handover leaks](https://issuetracker.google.com/issues/172141171)
+- [DNS traffic leaks](https://issuetracker.google.com/issues/337961996)
+
+**Timeline:**
+- **April 22, 2024:** Mullvad discovered DNS leaks with `getaddrinfo()`
+- **April 30, 2024:** [Reported to Google](https://issuetracker.google.com/issues/337961996)
+- **May 3, 2024:** [Blog post about findings](https://mullvad.net/blog/dns-traffic-can-leak-outside-the-vpn-tunnel-on-android)
+- **March 12, 2025:** Realized leaks extend beyond DNS
+
+---
+
+### Android: Broadcast Traffic Bypasses VPN
+
+**Issue:** Broadcast and multicast traffic to the local network bypasses the VPN tunnel.
+
+**Cause:** Long-standing Android limitation with no known fix.
+
+**Affected Versions:** All Android versions
+
+**Timeline:**
+- **December 18, 2019:** [Reported to Google](https://issuetracker.google.com/issues/146484540)
+
+---
+
+### macOS: Possible Leaks After System Updates
+
+**Issue:** Traffic may leak on first boot after macOS system updates due to firewall not functioning correctly.
+
+**Affected Traffic:**
+- Most traffic still goes through VPN due to routing table
+- Apps that bypass routing table (Apple apps, apps binding directly to physical interface) may leak
+
+**Affected Versions:** All Mullvad versions on macOS 14.6+ (possibly earlier)
+
+**Mitigation:** Reboot resolves the issue
+
+**Timeline:**
+- **September 30, 2024:** Observed internally
+- **October 16, 2024:** Reported to Apple (no public tracker)
+- **October 16, 2024:** [Blog post](https://mullvad.net/blog/macos-sometimes-leaks-traffic-after-system-updates)
+
+---
+
+### Windows: Hyper-V Virtual Networking Leaks
+
+**Issue:** Hyper-V virtual networking bypasses normal Windows firewall, allowing leaks from VMs and containers.
+
+**Affected Software:**
+- WSL2 (Windows Subsystem for Linux)
+- Hyper-V VMs
+- Windows Sandbox
+- Microsoft Edge with Application Guard
+
+**Mitigation:**
+Mullvad blocks Hyper-V traffic in secured states using Hyper-V-specific filters on:
+- Windows 11 22H2 and above
+- With Hyper-V firewall profile enabled
+
+**Limitations:**
+- Mitigation not available on Windows 10 or older Windows 11
+- Windows Sandbox traffic not blocked by Hyper-V firewall
+- Edge Application Guard ignores routing table, always leaking
+- LAN traffic never blocked while connected
+- Higher DNS leak risk
+
+**WSL2 Specific:**
+- Traffic tunneled when connected (respects routing table)
+- WSL firewall setting must not be disabled
+
+**Windows Sandbox Workaround:**
+Install and run Mullvad VPN inside Windows Sandbox.
+
+**Edge Application Guard:**
+Application Guard is [deprecated by Microsoft](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-security-windows-defender-application-guard). Recommend users avoid it.
+
+**Timeline:**
+- **August 12, 2020:** User reported WSL2 leak
+- **September 30, 2020:** [Blog post about WSL2 leaking](https://mullvad.net/en/blog/linux-under-wsl2-can-be-leaking)
+- **May 15, 2024:** User reported Edge Application Guard leak
+
+---
+
+### Android: ARP Exposes Tunnel IP
+
+**Issue ID:** [MLLVD-CR-24-03](https://github.com/mullvad/mullvadvpn-app/blob/main/audits/2024-12-10-X41-D-Sec.md#MLLVD-CR-24-03)
+
+**Issue:** Network-adjacent attackers can discover the device's in-tunnel IP via ARP requests.
+
+**Cause:** Android's `arp_ignore` kernel parameter defaults to `0`, making devices respond to ARP requests for any interface's IP.
+
+**Risk:** 
+- Adversary can guess if device uses Mullvad VPN
+- Possible device tracking (tunnel IP changes monthly)
+
+**Affected Versions:** All Android versions
+
+**Notes:**
+- Apps cannot change kernel parameters like `arp_ignore`
+- Reported to Google, no fix available
+- Not considered critical (tunnel IP reveals little about user)
+
+**User Mitigation:** Log out and back in to get new tunnel IP
+
+**Timeline:**
+- **November 6, 2024:** Reported by X41 D-Sec in [2024 audit](https://github.com/mullvad/mullvadvpn-app/blob/main/audits/2024-12-10-X41-D-Sec.md)
+- **November 14, 2024:** [Reported to Google](https://issuetracker.google.com/issues/378814597)
+
+## Development Issues
+
+### Split Tunneling: DNS Limitations
+
+**Issue:** DNS requests from excluded apps may go through the tunnel on some platforms.
+
+**Cause:** Platform limitations and IPC constraints.
+
+**Reference:** See [split tunneling documentation](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/split-tunneling.md) for details.
+
+---
+
+### Split Tunneling: Excluded App Traffic May Enter Tunnel
+
+**Issue:** Traffic from excluded applications sometimes incorrectly enters the VPN tunnel.
+
+**Cause:** Implementation limitations on certain operating systems.
+
+**Affected Platforms:** Linux, Windows, macOS (varies by situation)
+
+**Details:** See [split tunneling documentation](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/split-tunneling.md)
+
+---
+
+## Platform-Specific Quirks
+
+### macOS: Offline Detection Issues
+
+**Issue:** macOS offline detection can be unreliable, especially:
+- After system sleep/wake
+- When switching networks
+- On first boot after updates
+
+**Symptoms:**
+- App stuck in "offline" state
+- Unable to connect despite network being available
+- Slow to detect network changes
+
+**Workaround:**
+
+Disable offline monitor:
+
+```bash
+sudo plutil -replace EnvironmentVariables -json '{"TALPID_DISABLE_OFFLINE_MONITOR": "1"}' /Library/LaunchDaemons/net.mullvad.daemon.plist
+launchctl unload -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+launchctl load -w /Library/LaunchDaemons/net.mullvad.daemon.plist
+```
+
+<Warning>
+Disabling offline monitor means the app won't automatically handle network unavailability. Use with caution.
+</Warning>
+
+---
+
+### Windows: Driver Compatibility Issues
+
+**Issue:** Various Windows configurations may experience driver issues:
+- VMware conflicts
+- Hyper-V conflicts
+- Antivirus interference
+- BSOD on boot (rare)
+
+**Affected Components:**
+- WireGuard NT driver
+- Split tunnel driver
+- Wintun adapter
+
+**Mitigation:**
+- Update to latest Mullvad version
+- Use `wireguard-go` userspace implementation:
+  ```bash
+  # Build with userspace WireGuard
+  export TALPID_FORCE_USERSPACE_WIREGUARD=1
+  cargo build --features wireguard-go
+  ```
+
+---
+
+### Linux: Early Boot Blocking
+
+**Issue:** Network may leak during early boot before daemon starts.
+
+**Mitigation:** Mullvad provides `mullvad-early-boot-blocking.service` systemd unit.
+
+**Requirements:**
+- systemd-based distribution
+- Properly installed Mullvad package
+
+**Note:** On some distributions, `/opt` may not be mounted during early boot. The daemon binary is now in `/usr/bin/` to help with this.
+
+---
+
+### Linux: AppArmor Profile Required (Ubuntu 24.04+)
+
+**Issue:** GUI won't start without AppArmor profile.
+
+**Cause:** Ubuntu 24.04+ enforces AppArmor profiles for Electron apps.
+
+**Solution:** Install from official Mullvad packages (includes profile).
+
+**Manual Installation:**
+AppArmor profile is included in deb/rpm packages. For custom builds, copy from:
+```
+dist-assets/linux/apparmor-profile
+```
+
+## Reporting Issues
+
+This document is for **known issues that cannot be easily fixed**.
+
+For new bugs or feature requests:
+
+1. **Check** [GitHub Issues](https://github.com/mullvad/mullvadvpn-app/issues)
+2. **Review** [Security Policy](https://github.com/mullvad/mullvadvpn-app/blob/main/SECURITY.md)
+3. **Create new issue** with:
+   - Clear description
+   - Steps to reproduce
+   - Expected vs actual behavior
+   - Platform and version info
+   - Relevant logs (use `mullvad-problem-report`)
+
+## Security Disclosure
+
+For security vulnerabilities, see [SECURITY.md](https://github.com/mullvad/mullvadvpn-app/blob/main/SECURITY.md).
+
+**Do NOT** open public issues for security vulnerabilities.
+
+## Document Purpose
+
+This document provides:
+
+- **Transparency** to users about app limitations
+- **Resource** for developers understanding known issues
+- **Reference** for security auditors to avoid duplicate work
+- **Historical record** of discovered issues and their status
+
+<Info>
+This document is dynamic and updated as issues are discovered, fixed, or change status. Check the main repository for the latest version.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Documentation" icon="shield" href="/overview/security">
+    Learn about Mullvad's security model
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/development/troubleshooting">
+    Fix common development issues  
+  </Card>
+  <Card title="Build Instructions" icon="hammer" href="/development/build-instructions">
+    Set up development environment
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/development/contributing">
+    How to contribute to the project
+  </Card>
+</CardGroup>

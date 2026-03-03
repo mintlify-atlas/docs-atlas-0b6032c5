@@ -1,0 +1,127 @@
+---
+title: Security Practices
+description: Secure development practices and security policy for Mullvad VPN
+---
+
+Mullvad takes the security of our VPN app seriously. As a privacy-preserving VPN client, the app goes to great lengths to stop traffic leaks and defaults to secure/private options.
+
+## Secure Development
+
+Since the security of the users of the app is a top priority, by extension the security of the development and release process also becomes a top priority. This is something we work actively on.
+
+### OpenSSF Best Practices Badge
+
+The Mullvad VPN app has achieved the OpenSSF (Open Source Security Foundation) Best Practices badge, demonstrating our commitment to secure development practices.
+
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/9411/badge)](https://www.bestpractices.dev/projects/9411)
+
+View our [OpenSSF Best Practices project page](https://www.bestpractices.dev/projects/9411) to see all the criteria we meet.
+
+## Code Signing Requirements
+
+All merge commits to the main branch must be PGP signed. Certain security-critical files require signatures on every commit that changes them.
+
+See [Code Signing Requirements](/development/code-signing) for detailed information about git signature requirements.
+
+## Security Audits
+
+Mullvad performs independent third party security audits of the entire app every second year. We also conduct smaller, more specialized audits for certain features.
+
+### Audit Process
+
+Our security audit process includes:
+
+1. **Biannual Full Audits**: Complete security review of the entire application every two years
+2. **Feature-Specific Audits**: Targeted audits for security-critical features and changes
+3. **Penetration Testing**: Regular pentests by external security experts
+4. **Public Disclosure**: All audit results are made public in their unredacted original form
+
+### Completed Audits
+
+We've performed the following external security audits:
+
+- **2018-09-24** - Assured and Cure53
+- **2020-06-12** - Cure53
+- **2022-10-14** - Atredis
+- **2024-12-10** - X41 D-Sec
+
+### Additional Audits and Certifications
+
+Apart from the biannual audits, we've also conducted:
+
+- **2025-02-24** - NCC Group Mobile Application Security Assessment (MASA) of the Android app
+- **2025-03-20** - Audit of the installer downloader by Assured
+
+<Info>
+All audit reports are available in their unredacted original form in the [audits directory](https://github.com/mullvad/mullvadvpn-app/tree/main/audits) for full transparency towards users.
+</Info>
+
+## Reporting Security Vulnerabilities
+
+We welcome security researchers, customers, and anyone else to scrutinize the source code of our products and report any issues they find to us.
+
+### Responsible Research and Disclosure
+
+We ask you to carry out responsible research and disclosure. This includes, but is not limited to refraining from:
+
+- Denial of service attacks against API endpoints used by the app
+- Trying to disrupt the Mullvad VPN service
+- Publicly disclosing vulnerabilities before reporting them to us in private
+
+### Before Reporting
+
+Before reporting issues, we recommend that you read:
+
+- [docs/security.md](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md) - Explaining various expected security properties of the app
+- [Known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md) - Listing already known issues in the app
+
+### How to Submit Security Issues
+
+<Warning>
+**Please do not report security vulnerabilities through GitHub issues or other public channels.**
+</Warning>
+
+To report a security vulnerability, use one of these private channels:
+
+#### Option 1: GitHub Security Advisory (Recommended)
+
+[Create a vulnerability report on GitHub](https://github.com/mullvad/mullvadvpn-app/security/advisories/new)
+
+This is the preferred method as it allows us to coordinate privately before public disclosure.
+
+#### Option 2: Email
+
+Email our support team at [support@mullvadvpn.net](mailto:support@mullvadvpn.net)
+
+<Info>
+For sensitive reports, we recommend encrypting your email with our [support PGP key](https://mullvad.net/static/gpg/mullvadvpn-support-mail.asc).
+</Info>
+
+## Security Resources
+
+### Developer Keys
+
+You can find our developer keys and code signing keys on [Mullvad's Open Source page](https://mullvad.net/en/guides/open-source/). This page includes:
+
+- PGP keys for all Mullvad developers
+- Instructions for cryptographic verification of downloads
+- Code signing certificates
+
+### Security Documentation
+
+- [Security Features](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md) - Expected security properties of the app
+- [Known Issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md) - Already known issues
+- [Audit Reports](https://github.com/mullvad/mullvadvpn-app/tree/main/audits) - All security audit reports
+- [SECURITY.md](https://github.com/mullvad/mullvadvpn-app/blob/main/SECURITY.md) - Repository security policy
+
+## User Security and Privacy
+
+The Mullvad VPN app is a privacy preserving VPN client. As such it goes to great lengths to stop traffic leaks, and basically all settings default to the more secure/private option.
+
+<Info>
+Users have to explicitly allow more loose rules if desired. See the [dedicated security document](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/security.md) for details on what the app blocks and allows, as well as how it does it.
+</Info>
+
+## Bug Bounty Program
+
+While we don't currently have a formal bug bounty program, we greatly appreciate security researchers who responsibly disclose vulnerabilities to us. We take all reports seriously and will work with you to understand and address the issue.

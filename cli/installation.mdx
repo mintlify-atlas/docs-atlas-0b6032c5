@@ -1,0 +1,434 @@
+---
+title: CLI Installation
+description: Installing and setting up the Mullvad VPN command-line interface
+---
+
+The Mullvad CLI (`mullvad`) is included with all desktop installations of the Mullvad VPN app. This guide covers installation and setup for Linux, macOS, and Windows.
+
+## Prerequisites
+
+Before using the CLI, you need:
+
+1. A Mullvad account (create one at [mullvad.net](https://mullvad.net))
+2. The Mullvad daemon (`mullvad-daemon`) installed and running
+3. Appropriate system permissions (root/administrator for some operations)
+
+## Installation by Platform
+
+### Linux
+
+The CLI is included with the Mullvad VPN app installation.
+
+#### Debian/Ubuntu
+
+Download and install the `.deb` package from the [Mullvad downloads page](https://mullvad.net/download/):
+
+```bash
+sudo apt install ./mullvad-vpn_*_amd64.deb
+```
+
+The `mullvad` binary will be installed to `/usr/bin/mullvad`.
+
+#### Fedora/RHEL
+
+Download and install the `.rpm` package:
+
+```bash
+sudo dnf install ./mullvad-vpn-*.rpm
+```
+
+or
+
+```bash
+sudo rpm -i mullvad-vpn-*.rpm
+```
+
+#### Arch Linux
+
+Install from the AUR or use the official package:
+
+```bash
+yay -S mullvad-vpn
+```
+
+#### Verifying Installation
+
+Verify the CLI is installed:
+
+```bash
+which mullvad
+mullvad --version
+```
+
+### macOS
+
+The CLI is included with the Mullvad VPN app.
+
+#### Installation
+
+1. Download the `.pkg` installer from [mullvad.net/download](https://mullvad.net/download/)
+2. Open the downloaded `.pkg` file
+3. Follow the installation wizard
+
+The `mullvad` binary will be installed to `/usr/local/bin/mullvad`.
+
+#### Adding to PATH
+
+The installation should automatically add `/usr/local/bin` to your PATH. Verify the CLI is accessible:
+
+```bash
+which mullvad
+mullvad --version
+```
+
+If the command is not found, ensure `/usr/local/bin` is in your PATH:
+
+```bash
+export PATH="/usr/local/bin:$PATH"
+```
+
+Add this line to your `~/.zshrc` or `~/.bash_profile` to make it permanent.
+
+### Windows
+
+The CLI is included with the Mullvad VPN app installation.
+
+#### Installation
+
+1. Download the `.exe` installer from [mullvad.net/download](https://mullvad.net/download/)
+2. Run the installer as Administrator
+3. Follow the installation wizard
+
+The `mullvad.exe` binary will be installed to:
+
+```
+C:\Program Files\Mullvad VPN\resources\mullvad.exe
+```
+
+#### Adding to PATH
+
+To use the CLI from any command prompt:
+
+1. Open **System Properties** → **Environment Variables**
+2. Under **System variables**, find and edit **Path**
+3. Add: `C:\Program Files\Mullvad VPN\resources`
+4. Click **OK** to save
+5. Restart any open command prompts
+
+Alternatively, use the full path:
+
+```powershell
+"C:\Program Files\Mullvad VPN\resources\mullvad.exe" --version
+```
+
+#### PowerShell
+
+In PowerShell, you may need to use the full path or create an alias:
+
+```powershell
+Set-Alias mullvad "C:\Program Files\Mullvad VPN\resources\mullvad.exe"
+```
+
+Add this to your PowerShell profile to make it permanent:
+
+```powershell
+notepad $PROFILE
+```
+
+## Verifying Installation
+
+After installation, verify the CLI and daemon are working:
+
+### Check CLI Version
+
+```bash
+mullvad --version
+```
+
+Expected output:
+
+```
+mullvad 2026.x
+```
+
+### Check Daemon Status
+
+Verify the daemon is running:
+
+#### Linux
+
+```bash
+systemctl status mullvad-daemon
+```
+
+If not running, start it:
+
+```bash
+sudo systemctl start mullvad-daemon
+sudo systemctl enable mullvad-daemon  # Enable on boot
+```
+
+#### macOS
+
+```bash
+mullvad version
+```
+
+If the daemon is not running, start the Mullvad VPN app from Applications.
+
+#### Windows
+
+Open Services (services.msc) and check that "Mullvad VPN Service" is running. You can also check using the CLI:
+
+```powershell
+mullvad version
+```
+
+### Test CLI Connection
+
+Test that the CLI can communicate with the daemon:
+
+```bash
+mullvad status
+```
+
+If successful, you'll see the current VPN connection state.
+
+## Building from Source
+
+If you want to build the CLI from source:
+
+### Requirements
+
+- **Rust**: Latest stable toolchain via [rustup.rs](https://rustup.rs/)
+- **Platform-specific dependencies**: See [BuildInstructions.md](https://github.com/mullvad/mullvadvpn-app/blob/main/BuildInstructions.md)
+
+#### All Platforms
+
+1. Install Rust toolchain:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+2. Clone the repository:
+   ```bash
+   git clone https://github.com/mullvad/mullvadvpn-app.git
+   cd mullvadvpn-app
+   git submodule update --init
+   ```
+
+3. Install additional dependencies:
+   - **Protobuf compiler** (version 3.15+)
+   - **Go** (version 1.21+)
+   - **Bash** (version 4.0+)
+
+#### Linux-Specific Dependencies
+
+Debian/Ubuntu:
+
+```bash
+sudo apt install gcc libdbus-1-dev protobuf-compiler
+```
+
+Fedora/RHEL:
+
+```bash
+sudo dnf install dbus-devel protobuf-devel
+```
+
+#### Build the CLI
+
+From the repository root:
+
+```bash
+cargo build --release --bin mullvad
+```
+
+The binary will be at:
+
+```
+target/release/mullvad
+```
+
+Optionally, install it system-wide:
+
+```bash
+sudo cp target/release/mullvad /usr/local/bin/
+```
+
+#### Cross-Compilation
+
+**Linux ARM64:**
+
+```bash
+rustup target add aarch64-unknown-linux-gnu
+TARGETS="aarch64-unknown-linux-gnu" cargo build --release --bin mullvad
+```
+
+**Windows ARM64:**
+
+```bash
+rustup target add aarch64-pc-windows-msvc
+TARGETS="aarch64-pc-windows-msvc" cargo build --release --bin mullvad
+```
+
+**macOS Universal Binary:**
+
+```bash
+./build.sh --universal
+```
+
+## Shell Completions
+
+The CLI can generate shell completion scripts for better command-line integration.
+
+### Bash
+
+```bash
+mullvad shell-completions bash > /tmp/mullvad.bash
+sudo mv /tmp/mullvad.bash /etc/bash_completion.d/mullvad
+```
+
+Reload your shell:
+
+```bash
+source ~/.bashrc
+```
+
+### Zsh
+
+```bash
+mullvad shell-completions zsh > ~/.zsh_completions/_mullvad
+```
+
+Add to your `~/.zshrc` if not already present:
+
+```bash
+fpath=(~/.zsh_completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+Reload your shell:
+
+```bash
+source ~/.zshrc
+```
+
+### Fish
+
+```bash
+mullvad shell-completions fish > ~/.config/fish/completions/mullvad.fish
+```
+
+Reload Fish completions:
+
+```bash
+fish_update_completions
+```
+
+### PowerShell (Windows)
+
+Shell completions are not currently supported on Windows.
+
+## Permissions
+
+### Linux/macOS
+
+Most CLI commands require the daemon to be running with root privileges. The CLI itself doesn't need root access for most operations, but the daemon does.
+
+If you see permission errors:
+
+```bash
+sudo systemctl status mullvad-daemon
+```
+
+### Windows
+
+On Windows, the Mullvad service runs with SYSTEM privileges. You don't need administrator privileges to use the CLI for most operations, but starting/stopping the service requires elevation.
+
+## Troubleshooting
+
+### Command Not Found
+
+**Linux/macOS:**
+
+```bash
+which mullvad
+```
+
+If not found, ensure the installation directory is in your PATH:
+
+```bash
+export PATH="/usr/local/bin:$PATH"  # macOS
+export PATH="/usr/bin:$PATH"        # Linux
+```
+
+**Windows:**
+
+Verify the PATH includes:
+
+```
+C:\Program Files\Mullvad VPN\resources
+```
+
+### Cannot Connect to Daemon
+
+If you see "Failed to connect to daemon" errors:
+
+**Linux:**
+
+```bash
+sudo systemctl status mullvad-daemon
+sudo systemctl start mullvad-daemon
+```
+
+**macOS:**
+
+Start the Mullvad VPN app from Applications, or check if the daemon is running:
+
+```bash
+ps aux | grep mullvad-daemon
+```
+
+**Windows:**
+
+Check Services:
+
+```powershell
+Get-Service "Mullvad*"
+```
+
+Restart the service if needed:
+
+```powershell
+Restart-Service "Mullvad VPN Service"
+```
+
+### Permission Denied
+
+**Linux/macOS:**
+
+The daemon must run as root. Verify it's running with appropriate privileges:
+
+```bash
+sudo systemctl restart mullvad-daemon
+```
+
+**Windows:**
+
+Run Command Prompt or PowerShell as Administrator if you need to manage the service.
+
+## Next Steps
+
+Now that the CLI is installed:
+
+1. [CLI Overview](/cli/overview) - Learn basic CLI usage and commands
+2. [Command Reference](/cli/commands) - Detailed documentation for each command
+3. [Examples](/cli/examples) - Common usage patterns and workflows
+
+## Additional Resources
+
+- [Mullvad Downloads](https://mullvad.net/download/)
+- [Build Instructions](https://github.com/mullvad/mullvadvpn-app/blob/main/BuildInstructions.md)
+- [GitHub Repository](https://github.com/mullvad/mullvadvpn-app)
+- [Mullvad Open Source Page](https://mullvad.net/en/help/open-source/)

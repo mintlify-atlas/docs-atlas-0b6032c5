@@ -1,0 +1,740 @@
+---
+title: Routing
+description: Routing table manipulation and split tunneling implementation
+---
+
+Mullvad VPN manipulates the system routing table to ensure all traffic flows through the VPN tunnel and to implement split tunneling. The implementation varies by platform.
+
+## Overview
+
+Routing management handles:
+
+- **Default route replacement** - Routes all traffic through tunnel
+- **Specific routes** - Allows API access and relay connectivity
+- **Split tunneling** - Excludes specific applications from tunnel
+- **Route monitoring** - Detects and handles external changes
+
+Source: `talpid-routing/src/lib.rs`
+
+## Core Concepts
+
+### Route Structure
+
+A route consists of:
+
+```rust
+pub struct Route {
+    node: Node,            // Gateway/interface
+    prefix: IpNetwork,     // Destination network
+    metric: Option<u32>,   // Route priority
+    table_id: u32,         // Routing table (Linux)
+    mtu: Option<u32>,      // MTU for route
+}
+```
+
+Source: `talpid-routing/src/lib.rs:75-83`
+
+### Node Types
+
+**Gateway Node:**
+```rust
+Node::new(gateway_ip, "eth0".to_string())
+```
+
+**Address-only Node:**
+```rust
+Node::address(gateway_ip)
+```
+
+**Device-only Node:**
+```rust
+Node::device("wg0".to_string())
+```
+
+Source: `talpid-routing/src/lib.rs:226-249`
+
+### Route Destinations
+
+**Real Node:**
+```rust
+NetNode::RealNode(node)  // Fixed route
+```
+
+**Default Node (macOS/Windows):**
+```rust
+NetNode::DefaultNode  // Follows current default route
+```
+
+Source: `talpid-routing/src/lib.rs:199-210`
+
+## Windows Routing
+
+### Implementation
+
+Uses IP Helper API and routing change notifications:
+
+Source: `talpid-routing/src/windows/mod.rs`
+
+### Route Management
+
+**Add route:**
+```rust
+route_manager.add_route(RequiredRoute::new(prefix, node))?;
+```
+
+**Remove route:**
+```rust
+route_manager.delete_route(&route)?;
+```
+
+### Default Route Handling
+
+Windows monitors default route changes:
+
+**Detection:**
+- Listens for `NotifyRouteChange2` callbacks
+- Detects new default gateway
+- Updates symbolic default routes
+
+Source: `talpid-routing/src/windows/default_route_monitor.rs`
+
+**Best route selection:**
+```rust
+get_best_default_route() -> Option<InterfaceAndGateway>
+```
+
+Returns:
+- Interface with lowest metric
+- Gateway IP address  
+- Used to route non-tunnel traffic
+
+Source: `talpid-routing/src/windows/get_best_default_route.rs`
+
+### Split Tunneling (Windows)
+
+Windows implements split tunneling via driver:
+
+**Architecture:**
+
+1. **WFP callout driver** intercepts packets
+2. **Checks process path** against exclusion list
+3. **Redirects excluded traffic** to alternative interface
+4. **Preserves in-tunnel** for other traffic
+
+Source: `talpid-core/src/split_tunnel/windows/mod.rs`
+
+**Driver communication:**
+- Opens device handle to driver
+- Sends IOCTLs to configure exclusions
+- Monitors driver status
+
+**Path monitoring:**
+- Watches for excluded executable changes
+- Updates driver when paths modified
+- Handles volume mount/unmount events
+
+Source: `talpid-core/src/split_tunnel/windows/path_monitor.rs`
+
+## Linux Routing
+
+### Implementation  
+
+Uses Netlink (rtnetlink) for routing operations:
+
+Source: `talpid-routing/src/unix/linux.rs`
+
+### Routing Tables
+
+Linux uses multiple routing tables:
+
+**Main table (`254`):**
+- Default application routes
+- Tunnel default route
+
+**Custom table (e.g. `1984`):**
+- Split tunnel routes
+- Excluded process routes
+- Selected via fwmark
+
+Source: `talpid-core/src/firewall/linux.rs:98-100`
+
+### Route Operations
+
+**Add route:**
+```rust
+let route = Route::new(node, prefix)
+    .table(table_id)
+    .with_mtu(mtu);
+route_manager.add_route(route)?;
+```
+
+**Route attributes:**
+- `RTA_DST` - Destination prefix
+- `RTA_GATEWAY` - Gateway IP
+- `RTA_OIF` - Output interface index
+- `RTA_PRIORITY` - Metric
+- `RTA_TABLE` - Routing table ID
+- `RTA_METRICS` - MTU and other metrics
+
+Source: `talpid-routing/src/unix/linux.rs`
+
+### Default Route Replacement
+
+Tunnel setup replaces default route:
+
+```rust
+// Remove old default
+delete_route(Route::new(old_node, "0.0.0.0/0"))?;
+
+// Add tunnel default  
+add_route(Route::new(tunnel_node, "0.0.0.0/0"))?;
+add_route(Route::new(tunnel_node, "::/0"))?;
+```
+
+### Policy Routing
+
+Linux uses policy routing for split tunneling:
+
+**IP rules:**
+```bash
+# Route marked packets to custom table
+ip rule add fwmark 0x6d6f6c65 table 1984
+
+# Default table for unmarked
+ip rule add table main
+```
+
+**Custom table routes:**
+```bash
+# Route to physical interface
+ip route add default via 192.168.1.1 dev eth0 table 1984
+```
+
+### Split Tunneling (Linux)
+
+#### cgroup2 Method (Modern)
+
+**Primary method** using cgroups v2:
+
+Source: `talpid-core/src/split_tunnel/linux/mod.rs:99-112`
+
+**Setup:**
+
+1. **Create cgroup2** at `/sys/fs/cgroup/mullvad-exclusions`
+   ```rust
+   let excluded_cgroup = root_cgroup.create_or_open_child("mullvad-exclusions")?;
+   ```
+
+2. **Add PIDs** to cgroup:
+   ```rust
+   excluded_cgroup.add_pid(pid)?;
+   ```
+
+3. **nftables matches cgroup**:
+   ```
+   socket cgroupv2 level 1 {inode_of_excluded_cgroup} mark set 0x6d6f6c65
+   ```
+
+Source: `talpid-core/src/firewall/linux.rs:355-375`
+
+**How it works:**
+
+- Processes added to cgroup2
+- All packets from cgroup get fwmark
+- Policy routing sends marked packets to custom table
+- Custom table routes to non-tunnel interface
+
+**cgroup2 location:**
+
+Default: `/sys/fs/cgroup`
+
+Customize: `TALPID_CGROUP2_FS=/custom/path`
+
+Source: `docs/README.md:207-210`
+
+#### net_cls Method (Legacy)
+
+**Fallback** using cgroups v1 net_cls controller:
+
+Source: `talpid-core/src/split_tunnel/linux/mod.rs:114-124`
+
+**Setup:**
+
+1. **Mount net_cls** (if needed):
+   ```bash
+   mount -t cgroup -o net_cls none /sys/fs/cgroup/net_cls
+   ```
+   
+   Customize: `TALPID_NET_CLS_MOUNT_DIR=/custom/path`
+
+2. **Create cgroup**:
+   ```rust
+   let excluded_cgroup = root_cgroup.create_or_open_child("mullvad-exclusions")?;
+   excluded_cgroup.set_net_cls_id(0xf41)?;
+   ```
+
+3. **Add PIDs**:
+   ```rust
+   excluded_cgroup.add_pid(pid)?;
+   ```
+
+4. **nftables matches classid**:
+   ```
+   meta cgroup 0xf41 mark set 0x6d6f6c65
+   ```
+
+Source: `talpid-core/src/firewall/linux.rs:376-383`
+
+**How it works:**
+
+- Processes added to net_cls cgroup
+- Packets inherit classid (0xf41)
+- nftables matches classid
+- Applies fwmark for routing
+
+Source: `docs/README.md:212-214`
+
+#### Firewall Integration
+
+Split tunnel rules in nftables:
+
+**Mangle chain (mark packets):**
+```
+chain mangle {
+    type route hook output priority mangle; policy accept;
+    
+    # Mark packets from excluded cgroup
+    socket cgroupv2 level 1 {inode} ct mark set 0xf41 mark set 0x6d6f6c65
+}
+```
+
+**Output chain (allow marked):**
+```
+chain output {
+    type filter hook output priority 0; policy drop;
+    
+    # Allow marked traffic
+    ct mark 0xf41 accept
+}
+```
+
+**NAT chain (masquerade):**
+```
+chain nat {
+    type nat hook postrouting priority srcnat; policy accept;
+    
+    # Fix source IP for rerouted packets
+    oif != "lo" ct mark 0xf41 masquerade
+}
+```
+
+Source: `talpid-core/src/firewall/linux.rs:391-495`
+
+#### Connection Tracking
+
+Connection tracking ensures consistency:
+
+```
+# Mark new connections from cgroup
+ct mark set 0xf41
+
+# Match established connections
+ct mark 0xf41
+```
+
+- New connections marked based on cgroup
+- Subsequent packets match conntrack mark
+- Survives process exit or cgroup removal
+
+Source: `talpid-core/src/firewall/linux.rs:426-441`
+
+## macOS Routing
+
+### Implementation
+
+Uses routing socket and BSD routing APIs:
+
+Source: `talpid-routing/src/unix/macos/mod.rs`
+
+### Routing Socket
+
+MacOS communicates via `PF_ROUTE` socket:
+
+**Operations:**
+- `RTM_ADD` - Add route
+- `RTM_DELETE` - Delete route  
+- `RTM_GET` - Query route
+- `RTM_CHANGE` - Modify route
+
+Source: `talpid-routing/src/unix/macos/routing_socket.rs`
+
+### Default Route Monitoring
+
+Monitors default route changes:
+
+**Detection:**
+```rust
+let (tx, rx) = watch::channel(DefaultRouteEvent);
+start_monitoring(tx)?;
+```
+
+**Events:**
+- `DefaultRouteAdded` - New default gateway
+- `DefaultRouteRemoved` - Default gateway removed
+- `DefaultRouteChanged` - Gateway IP changed
+
+Source: `talpid-routing/src/unix/macos/watch.rs`
+
+**Route parsing:**
+- Reads routing messages from socket
+- Parses route attributes (dst, gateway, interface)
+- Identifies default routes (`0.0.0.0/0`, `::/0`)
+- Resolves MAC address via ARP
+
+Source: `talpid-routing/src/unix/macos/default_routes.rs`
+
+### Split Tunneling (macOS)
+
+MacOS implements split tunneling via PF routing:
+
+**Mechanism:**
+
+1. **Process monitoring** tracks excluded apps
+2. **PF rules** use BPF device filters
+3. **Route-to** directs traffic to physical interface
+4. **Preserves** tunnel traffic for other apps
+
+Source: `talpid-core/src/split_tunnel/macos/mod.rs`
+
+**PF route-to rule:**
+```
+pass out quick on utun3 route-to (en0 192.168.1.1) keep state
+```
+
+- Matches tunnel interface
+- Routes to physical interface instead
+- Bypasses tunnel for excluded processes
+
+Source: `talpid-core/src/firewall/macos.rs:755-775`
+
+**Process identification:**
+- Uses Endpoint Security framework
+- Monitors process launch/exit
+- Tracks process tree (parent-child)
+- Updates exclusions dynamically
+
+Source: `talpid-core/src/split_tunnel/macos/process.rs`
+
+**BPF integration:**
+- Attaches BPF program to interface
+- Filters packets by process
+- Works with PF rules for routing
+
+Source: `talpid-core/src/split_tunnel/macos/bpf.rs`
+
+### Interface and Gateway Resolution
+
+Gateway includes MAC address:
+
+```rust
+pub struct Gateway {
+    pub ip_address: IpAddr,
+    pub mac_address: MacAddress,
+}
+```
+
+Required for proper route-to operation.
+
+Source: `talpid-routing/src/lib.rs:63-70`
+
+## Android Routing
+
+### Implementation
+
+Uses VPN Service API - no direct routing control:
+
+Source: `talpid-routing/src/unix/android.rs`
+
+### VPN Service Routing
+
+**Configuration:**
+```kotlin
+VpnService.Builder()
+    .addRoute("0.0.0.0", 0)    // Route all IPv4
+    .addRoute("::", 0)          // Route all IPv6
+    .addDisallowedApplication(pkg) // Split tunneling
+```
+
+**Behavior:**
+- System handles all routing automatically
+- Cannot add specific routes
+- Split tunneling via allowed/disallowed apps
+
+### Split Tunneling (Android)
+
+**Per-app exclusion:**
+```kotlin
+builder.addDisallowedApplication("com.example.app")
+```
+
+- Excluded apps bypass VPN entirely
+- Use system default routes
+- Get system DNS
+
+Source: `docs/split-tunneling.md:63-73`
+
+## Route Manager Interface
+
+### Initialization
+
+```rust
+let (route_manager, handle) = RouteManager::new().await?;
+tokio::spawn(route_manager.run());
+```
+
+### Adding Routes
+
+**Simple route:**
+```rust
+let route = RequiredRoute::new(
+    "10.0.0.0/8".parse()?,
+    Node::address(gateway_ip)
+);
+handle.add_route(route).await?;
+```
+
+**With options:**
+```rust
+let route = RequiredRoute::new(prefix, node)
+    .use_main_table(false)  // Linux: custom table
+    .with_mtu(1380);        // Set MTU
+handle.add_route(route).await?;
+```
+
+Source: `talpid-routing/src/lib.rs:170-196`
+
+### Removing Routes
+
+```rust
+handle.delete_route(&route).await?;
+```
+
+### Default Route Handling
+
+Routes using `DefaultNode` update automatically:
+
+```rust
+let route = RequiredRoute::new(
+    api_ip_prefix,
+    NetNode::DefaultNode  // Tracks default gateway
+);
+```
+
+When system default route changes:
+- Route manager detects change
+- Updates all `DefaultNode` routes
+- Uses new default gateway
+
+Source: `talpid-routing/src/lib.rs:199-210`
+
+## Common Routing Patterns
+
+### Tunnel All Traffic
+
+```rust
+// Add default routes through tunnel
+add_route(RequiredRoute::new("0.0.0.0/0".parse()?, tunnel_node));
+add_route(RequiredRoute::new("::/0".parse()?, tunnel_node));
+```
+
+### Relay Endpoint Access
+
+```rust
+// Route relay traffic via default gateway
+add_route(RequiredRoute::new(
+    relay_ip_prefix,
+    NetNode::DefaultNode
+));
+```
+
+### API Access
+
+```rust
+// Route API via default gateway  
+add_route(RequiredRoute::new(
+    api_ip_prefix,
+    NetNode::DefaultNode
+));
+```
+
+### LAN Access
+
+```rust
+// Private networks via default gateway
+for net in ALLOWED_LAN_NETS {
+    add_route(RequiredRoute::new(net, NetNode::DefaultNode));
+}
+```
+
+## MTU Considerations
+
+Routes can specify MTU:
+
+```rust
+let route = RequiredRoute::new(prefix, node)
+    .with_mtu(1380);  // Lower MTU for encapsulation
+```
+
+**Why lower MTU:**
+- WireGuard adds ~60 bytes overhead
+- Prevents fragmentation
+- Typical: 1420 for tunnel, 1380 for multihop
+
+Source: `talpid-routing/src/lib.rs:192-196`
+
+## Monitoring and Resilience
+
+### Route Change Detection
+
+All platforms monitor routing changes:
+
+**Windows:**
+- `NotifyRouteChange2` callbacks
+- Detects route additions/deletions
+- Updates symbolic routes
+
+Source: `talpid-routing/src/windows/default_route_monitor.rs`
+
+**Linux:**
+- Netlink route notifications
+- Monitors `RTM_NEWROUTE`/`RTM_DELROUTE`
+- Validates expected routes
+
+Source: `talpid-routing/src/unix/linux.rs`
+
+**macOS:**
+- Routing socket messages
+- Parses `RTM_*` events
+- Updates gateway information
+
+Source: `talpid-routing/src/unix/macos/watch.rs`
+
+### Route Restoration
+
+On disconnect:
+
+1. Remove tunnel default routes
+2. Restore original default gateway
+3. Delete custom routes
+4. Reset routing tables (Linux)
+
+## Split Tunneling Summary
+
+### Windows
+
+**Method**: WFP callout driver
+
+**Granularity**: Per executable path
+
+**How**: Driver intercepts and redirects packets
+
+### Linux
+
+**Method**: cgroup2 + nftables (or net_cls fallback)
+
+**Granularity**: Per process (PID)
+
+**How**: Mark packets, policy routing to alternate table
+
+### macOS  
+
+**Method**: PF route-to + process monitoring
+
+**Granularity**: Per process tree
+
+**How**: BPF + PF rules route to physical interface
+
+### Android
+
+**Method**: VPN Service disallowed apps
+
+**Granularity**: Per app package
+
+**How**: System bypasses VPN for excluded apps
+
+Source: `docs/split-tunneling.md`
+
+## Environment Variables
+
+```bash
+# Linux: cgroup2 filesystem path
+TALPID_CGROUP2_FS=/custom/path
+
+# Linux: net_cls mount directory
+TALPID_NET_CLS_MOUNT_DIR=/custom/path
+```
+
+Source: `docs/README.md:207-214`
+
+## Troubleshooting
+
+### Routes Not Applied
+
+**Check route manager status:**
+```bash
+# Linux
+ip route show
+ip route show table 1984
+
+# macOS  
+netstat -rn
+
+# Windows
+route print
+```
+
+### Split Tunneling Not Working
+
+**Linux - Verify cgroup:**
+```bash
+# Check cgroup2
+ls -la /sys/fs/cgroup/mullvad-exclusions/
+cat /sys/fs/cgroup/mullvad-exclusions/cgroup.procs
+
+# Check nftables rules
+sudo nft list table inet mullvad
+
+# Check policy routing
+ip rule show
+ip route show table 1984
+```
+
+**macOS - Check PF:**
+```bash
+# View PF rules
+sudo pfctl -a mullvad -sr
+
+# Check route-to rules
+sudo pfctl -a mullvad -sr | grep route-to
+```
+
+**Windows - Check driver:**
+```powershell
+# Verify driver loaded
+sc query mullvad-split-tunnel
+
+# Check exclusions
+mullvad split-tunnel list
+```
+
+### Default Route Issues
+
+**Symptoms**: No connectivity after tunnel up
+
+**Diagnosis**:
+1. Verify tunnel interface exists
+2. Check default routes point to tunnel
+3. Verify relay route via physical interface
+4. Check firewall allows relay endpoint
+
+**Fix**: Route manager should auto-correct, or restart daemon

@@ -1,0 +1,279 @@
+---
+title: "mullvad account"
+description: "Manage your Mullvad account"
+---
+
+## Overview
+
+The `mullvad account` command provides account management functionality including account creation, login, logout, device management, and voucher redemption.
+
+## Syntax
+
+```bash
+mullvad account <SUBCOMMAND>
+```
+
+## Subcommands
+
+### create
+
+Create and log in to a new Mullvad account:
+
+```bash
+mullvad account create
+```
+
+Generates a new account number and automatically logs you in.
+
+### login
+
+Log in to an existing account:
+
+```bash
+mullvad account login [ACCOUNT_NUMBER]
+```
+
+If no account number is provided, you'll be prompted to enter one.
+
+### logout
+
+Log out from the current account:
+
+```bash
+mullvad account logout
+```
+
+Removes the device from your Mullvad account.
+
+### get
+
+Display information about the current account:
+
+```bash
+mullvad account get [OPTIONS]
+```
+
+**Options:**
+- `-v`, `--verbose` - Enable verbose output including device ID and public key
+
+### list-devices
+
+List all devices associated with an account:
+
+```bash
+mullvad account list-devices [OPTIONS]
+```
+
+**Options:**
+- `-a`, `--account <ACCOUNT>` - Mullvad account number (uses current account if not specified)
+- `-v`, `--verbose` - Show detailed device information including IDs and public keys
+
+### revoke-device
+
+Revoke a device from an account:
+
+```bash
+mullvad account revoke-device <DEVICE> [OPTIONS]
+```
+
+**Arguments:**
+- `<DEVICE>` - Name or UID of the device to revoke
+
+**Options:**
+- `-a`, `--account <ACCOUNT>` - Mullvad account number (uses current account if not specified)
+
+### redeem
+
+Redeem a voucher code:
+
+```bash
+mullvad account redeem <VOUCHER>
+```
+
+**Arguments:**
+- `<VOUCHER>` - Voucher code to submit
+
+## Examples
+
+### Create New Account
+
+```bash
+mullvad account create
+```
+
+Output:
+```
+New account created!
+Mullvad account:    1234567890123456
+Expires at:         2026-04-03 10:30:00 +01:00
+Device name:        laptop
+```
+
+### Login to Account
+
+With account number as argument:
+
+```bash
+mullvad account login 1234567890123456
+```
+
+Interactive login (prompts for account number):
+
+```bash
+mullvad account login
+```
+
+Output:
+```
+Enter an account number: 1234567890123456
+Mullvad account "1234567890123456" set
+```
+
+### Check Account Information
+
+Basic account info:
+
+```bash
+mullvad account get
+```
+
+Output:
+```
+Mullvad account:    1234567890123456
+Expires at:         2026-04-03 10:30:00 +01:00
+Device name:        laptop
+```
+
+Verbose account info:
+
+```bash
+mullvad account get --verbose
+```
+
+Output:
+```
+Mullvad account:    1234567890123456
+Expires at:         2026-04-03 10:30:00 +01:00
+Account id:         abc123def456
+Device name:        laptop
+Device id:          device-uuid-here
+Device pubkey:      wg-public-key-here
+Device created:     2025-03-03 10:30:00 +01:00
+```
+
+### List Devices
+
+List devices on current account:
+
+```bash
+mullvad account list-devices
+```
+
+Output:
+```
+Devices on the account:
+laptop
+phone
+desktop
+```
+
+Verbose device listing:
+
+```bash
+mullvad account list-devices --verbose
+```
+
+Output:
+```
+Devices on the account:
+
+Name      : laptop
+Id        : device-uuid-1
+Public key: wg-public-key-1
+Created   : 2025-03-03 10:30:00 +01:00
+
+Name      : phone
+Id        : device-uuid-2
+Public key: wg-public-key-2
+Created   : 2025-03-02 15:20:00 +01:00
+```
+
+### Revoke Device
+
+Revoke by device name:
+
+```bash
+mullvad account revoke-device laptop
+```
+
+Revoke by device ID:
+
+```bash
+mullvad account revoke-device device-uuid-1
+```
+
+Revoke device from specific account:
+
+```bash
+mullvad account revoke-device phone --account 1234567890123456
+```
+
+Output:
+```
+Removed device
+```
+
+### Redeem Voucher
+
+```bash
+mullvad account redeem ABCD1234EFGH5678
+```
+
+Output:
+```
+Added 30 days to the account
+New expiry date: 2026-05-03 10:30:00 +01:00
+```
+
+### Logout
+
+```bash
+mullvad account logout
+```
+
+Output:
+```
+Removed device from Mullvad account
+```
+
+## Account States
+
+The account can be in one of three states:
+
+1. **LoggedIn** - Successfully logged in with active device
+2. **LoggedOut** - Not logged in to any account
+3. **Revoked** - Device has been revoked from the account
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect to VPN (requires active account)
+- [status](/cli/commands/status) - Check connection and account status
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Command executed successfully |
+| 1 | Command failed (e.g., invalid account, device not found) |
+
+## Notes
+
+- Account numbers are 16-digit identifiers
+- Voucher codes accept alphanumeric characters (non-alphanumeric characters are automatically removed)
+- Device names and IDs are case-insensitive when revoking
+- The CLI automatically updates device information before displaying account details
+- Devices are sorted by creation date when listing
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/account.rs`

@@ -1,0 +1,131 @@
+---
+title: Settings Management
+description: Manage Mullvad VPN settings and use JSON patch format for configuration
+---
+
+## Settings Directory
+
+The daemon stores its settings in a platform-specific directory. This location can be customized using the `MULLVAD_SETTINGS_DIR` environment variable.
+
+### Default Paths
+
+| Platform | Path |
+|----------|------|
+| Linux | `/etc/mullvad-vpn/` |
+| macOS | `/etc/mullvad-vpn/` |
+| Windows | `%LOCALAPPDATA%\Mullvad VPN\` |
+| Android | `getFilesDir()` |
+
+<Note>
+On Windows, when the daemon runs as a system service, `%LOCALAPPDATA%` expands to `C:\Windows\system32\config\systemprofile\AppData\Local`.
+</Note>
+
+### Customizing Settings Directory
+
+You can override the default settings directory by setting the `MULLVAD_SETTINGS_DIR` environment variable. See [Environment Variables](/cli/configuration/environment-variables) for platform-specific instructions.
+
+## Settings Patch Format
+
+Mullvad settings patch is a JSON format used to apply changes to app settings. This makes it easy to share or distribute useful configurations, such as optimizations for censored locations.
+
+### Format Structure
+
+A patch consists of a JSON object where each key refers to a setting to be edited. The type of value and merge strategy depend on the specific setting.
+
+### Important Considerations
+
+<Warning>
+- If any part of a patch is not supported on a platform, the app will reject the entire patch
+- No changes will be applied if the patch is rejected
+- Patches must not edit settings that may compromise security (e.g., enabling custom DNS)
+</Warning>
+
+### Supported Settings
+
+#### Relay Overrides
+
+The relay IP override setting allows you to specify custom IP addresses for specific relay servers.
+
+**Example:**
+
+```json
+{
+    "relay_overrides": [
+        { "hostname": "a", "ipv4_addr_in": "1.2.3.4" },
+        { "hostname": "b", "ipv4_addr_in": "1.2.3.4", "ipv6_addr_in": "::1" }
+    ]
+}
+```
+
+**Merge Strategy:**
+
+The relay overrides use an "append or replace" strategy:
+
+- Overrides for hostnames not present in the array remain unchanged
+- For any given hostname, only specified overrides change
+- Overrides that are specified are added or replaced
+- There is no way to remove an existing override without replacing it
+
+**Examples:**
+
+<CodeGroup>
+```json Setting IPv4 override
+{
+    "relay_overrides": [
+        { "hostname": "se-got-wg-001", "ipv4_addr_in": "192.0.2.1" }
+    ]
+}
+```
+
+```json Setting both IPv4 and IPv6
+{
+    "relay_overrides": [
+        {
+            "hostname": "se-got-wg-001",
+            "ipv4_addr_in": "192.0.2.1",
+            "ipv6_addr_in": "2001:db8::1"
+        }
+    ]
+}
+```
+
+```json Multiple server overrides
+{
+    "relay_overrides": [
+        { "hostname": "se-got-wg-001", "ipv4_addr_in": "192.0.2.1" },
+        { "hostname": "us-nyc-wg-001", "ipv4_addr_in": "192.0.2.2" },
+        { "hostname": "gb-lon-wg-001", "ipv4_addr_in": "192.0.2.3" }
+    ]
+}
+```
+</CodeGroup>
+
+### Applying Patches
+
+You can apply settings patches using the Mullvad CLI:
+
+```bash
+mullvad settings import patch.json
+```
+
+### Versioning and Compatibility
+
+Patches are not versioned, as backward compatibility is not considered critical. However, compatibility should not be broken without good reason.
+
+Not all platforms support all settings at all times. If a setting is not supported on your platform, the entire patch will be rejected.
+
+### Security Considerations
+
+<Warning>
+Settings patches are designed to be safe by default:
+
+- Cannot enable settings that compromise security
+- Cannot modify DNS settings
+- Cannot disable security features
+- All changes must be explicitly allowed by the patch format
+</Warning>
+
+## Related Resources
+
+- [Environment Variables](/cli/configuration/environment-variables) - Configure daemon behavior
+- [File Paths](/cli/configuration/file-paths) - All file locations used by the app

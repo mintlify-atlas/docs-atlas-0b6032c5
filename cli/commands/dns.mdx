@@ -1,0 +1,248 @@
+---
+title: "mullvad dns"
+description: "Configure DNS servers and content blocking"
+---
+
+## Overview
+
+The `mullvad dns` command manages DNS configuration including Mullvad's default DNS with content blocking or custom DNS servers.
+
+## Syntax
+
+```bash
+mullvad dns <SUBCOMMAND>
+```
+
+## Subcommands
+
+### get
+
+Display current DNS settings:
+
+```bash
+mullvad dns get
+```
+
+### set
+
+Configure DNS servers:
+
+```bash
+mullvad dns set <MODE>
+```
+
+## Set Modes
+
+### default
+
+Use Mullvad's default DNS servers with optional content blocking:
+
+```bash
+mullvad dns set default [OPTIONS]
+```
+
+**Options:**
+- `--block-ads` - Block domains known for advertising
+- `--block-trackers` - Block domains known for tracking
+- `--block-malware` - Block domains known for malware
+- `--block-adult-content` - Block domains with adult content
+- `--block-gambling` - Block domains known for gambling
+- `--block-social-media` - Block social media domains
+
+All blocking options are disabled by default. Enable any combination by specifying the flags.
+
+### custom
+
+Use custom DNS servers:
+
+```bash
+mullvad dns set custom <SERVER>...
+```
+
+**Arguments:**
+- `<SERVER>...` - One or more IP addresses of DNS resolvers
+
+## Examples
+
+### View Current DNS Settings
+
+```bash
+mullvad dns get
+```
+
+With default DNS:
+```
+Custom DNS: no
+Block ads: false
+Block trackers: false
+Block malware: false
+Block adult content: false
+Block gambling: false
+Block social media: false
+```
+
+With custom DNS:
+```
+Custom DNS: yes
+Servers:
+1.1.1.1
+8.8.8.8
+```
+
+### Use Default DNS
+
+Default DNS without blocking:
+
+```bash
+mullvad dns set default
+```
+
+Output:
+```
+Updated DNS settings
+```
+
+### Enable Content Blocking
+
+Block ads and trackers:
+
+```bash
+mullvad dns set default --block-ads --block-trackers
+```
+
+Block malware:
+
+```bash
+mullvad dns set default --block-malware
+```
+
+Block multiple categories:
+
+```bash
+mullvad dns set default --block-ads --block-trackers --block-malware --block-adult-content
+```
+
+Block everything:
+
+```bash
+mullvad dns set default \
+  --block-ads \
+  --block-trackers \
+  --block-malware \
+  --block-adult-content \
+  --block-gambling \
+  --block-social-media
+```
+
+### Use Custom DNS Servers
+
+Single DNS server:
+
+```bash
+mullvad dns set custom 1.1.1.1
+```
+
+Multiple DNS servers:
+
+```bash
+mullvad dns set custom 1.1.1.1 8.8.8.8
+```
+
+IPv6 DNS servers:
+
+```bash
+mullvad dns set custom 2606:4700:4700::1111 2001:4860:4860::8888
+```
+
+Mixed IPv4 and IPv6:
+
+```bash
+mullvad dns set custom 1.1.1.1 2606:4700:4700::1111
+```
+
+Output:
+```
+Updated DNS settings
+```
+
+## Content Blocking Categories
+
+### Ads
+
+Blocks domains commonly used for advertising and sponsored content.
+
+**Example blocked domains:**
+- Ad networks
+- Ad servers
+- Sponsored content providers
+
+### Trackers
+
+Blocks domains used for user tracking and analytics.
+
+**Example blocked domains:**
+- Analytics platforms
+- Tracking pixels
+- Fingerprinting services
+
+### Malware
+
+Blocks domains known to distribute malware or participate in malicious activities.
+
+**Example blocked domains:**
+- Malware distribution sites
+- Phishing domains
+- Command and control servers
+
+### Adult Content
+
+Blocks domains hosting adult/NSFW content.
+
+### Gambling
+
+Blocks online gambling and betting sites.
+
+### Social Media
+
+Blocks popular social media platforms.
+
+**Example blocked domains:**
+- Facebook
+- Twitter/X
+- Instagram
+- TikTok
+
+## DNS Modes
+
+There are two DNS modes:
+
+1. **Default** - Uses Mullvad's DNS servers with optional content blocking
+2. **Custom** - Uses your specified DNS servers (no content blocking available)
+
+When using custom DNS, content blocking options are unavailable.
+
+## Related Commands
+
+- [tunnel](/cli/commands/tunnel) - Configure other tunnel options
+- [connect](/cli/commands/connect) - Connect with current DNS settings
+- [status](/cli/commands/status) - View connection status
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | DNS settings updated successfully |
+| 1 | Invalid DNS server or configuration failed |
+
+## Notes
+
+- DNS changes take effect on the next connection (reconnect if already connected)
+- Custom DNS servers must be valid IP addresses
+- Content blocking only works with Mullvad's default DNS
+- Both IPv4 and IPv6 DNS servers are supported
+- Multiple DNS servers provide redundancy
+- Content blocking is implemented at the DNS level (domain blocking)
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/dns.rs`

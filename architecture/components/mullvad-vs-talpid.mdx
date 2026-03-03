@@ -1,0 +1,263 @@
+---
+title: Mullvad vs Talpid Layers
+description: Understanding the separation between the Talpid generic VPN core and Mullvad-specific functionality
+---
+
+## Overview
+
+The Mullvad VPN application is architecturally divided into two distinct layers:
+
+- **Talpid**: A generic, provider-agnostic VPN core library
+- **Mullvad**: The Mullvad-specific business logic and features
+
+This separation ensures modularity, testability, and clear separation of concerns between generic VPN operations and Mullvad-specific functionality.
+
+## Talpid Layer
+
+### Purpose
+
+Talpid (from Swedish "talpid" meaning "patient") is the foundational VPN core that handles:
+
+- Tunnel state machine coordination
+- Operating system integration (firewall, DNS, routing)
+- Platform-specific implementations for Windows, Linux, macOS, Android, and iOS
+- Generic VPN connection logic
+- Security policy enforcement
+
+### Key Components
+
+#### Tunnel State Machine
+
+The tunnel state machine (`talpid-core/src/tunnel_state_machine`) is the core of Talpid. It coordinates VPN connection establishment and manages state transitions:
+
+- **Disconnected**: Initial state, no system modifications
+- **Connecting**: Configuring OS and establishing VPN connection
+- **Connected**: Tunnel verified and working
+- **Disconnecting**: Closing connection and restoring OS configuration
+- **Error**: Blocking all connections to prevent leaks
+
+```
+              +--------------+   Request to connect    +------------+
+Start ------->| Disconnected +------------------------>| Connecting |
+              +--------------+                         +----+--+--+-+
+                  ^                                      ^  |  ^  |
+                  |           Will attempt to reconnect  |  |  |  |
+                  |   .----------------------------------'  |  |  |
+                  |   |                                     |  |  |
+                  |   |                   .-----------------'  |  |
+                  |   |                   | Unrecoverable      |  |
+                  |   |                   |     error          |  |
+                  |   |    Request to     V                    |  |
+System is restored |   |    disconnect +-------+                |  | Connection is configured
+  to its initial   |   |   .-----------+ Error +----------------'  |       and working
+   configuration   |   |   |           +-------+  Request to       |
+                  |   |   |               ^       connect         |
+                  |   |   |               |                       |
+                  |   |   |  .------------'                       |
+                  |   |   |  | Unrecoverable                      |
+                  |   |   |  |  error while                       |
+                  |   |   |  |  in connected                      |
+                  |   |   V  |     state                          V
+               +--+---+------+-+                         +-----------+
+               | Disconnecting |<------------------------+ Connected |
+               +---------------+  Request to disconnect  +-----------+
+```
+
+Reference: `talpid-core/src/tunnel_state_machine/mod.rs`
+
+#### System Integration
+
+Talpid provides abstractions for:
+
+- **Firewall Integration**: Platform-specific firewall implementations (`talpid-core/src/firewall`)
+  - Windows: WFP (Windows Filtering Platform) via `windows/winfw`
+  - Linux: nftables/iptables
+  - macOS: PF (Packet Filter)
+  
+- **DNS Management**: System DNS configuration (`talpid-dns`)
+
+- **Routing**: Route table manipulation (`talpid-routing`)
+
+- **Offline Detection**: Network connectivity monitoring (`talpid-core/src/offline`) - see [Offline Detection](/architecture/components/offline-detection)
+
+#### Platform-Specific Crates
+
+- `talpid-windows`: Windows-specific utilities
+- `talpid-macos`: macOS-specific utilities  
+- `talpid-core`: Cross-platform core logic
+- `talpid-types`: Common type definitions
+- `talpid-wireguard`: WireGuard integration
+
+### State Machine Inputs
+
+The tunnel state machine responds to:
+
+**Commands:**
+- `Connect`: Establish secure VPN connection
+- `Disconnect`: Tear down connection and restore OS state
+- `Allow LAN`: Enable/disable local network sharing
+- `Block when disconnected`: Apply security policy in disconnected state
+
+**External Events:**
+- `Tunnel is Up`: Monitor confirms tunnel is working
+- `Tunnel is Down`: Monitor detects tunnel disconnect
+- `Tunnel monitor stopped`: Lost communication with monitor
+- `Is offline`: OS network connectivity status changed
+
+### State Machine Outputs
+
+Every state transition emits a `TunnelStateTransition`:
+
+- **Disconnected**: No active tunnel
+- **Connecting**: Includes target endpoint information
+- **Connected**: Includes connected endpoint information
+- **Disconnecting**: Includes next action (Nothing, Block, or Reconnect)
+- **Error**: Includes error cause and blocking status
+
+## Mullvad Layer
+
+### Purpose
+
+The Mullvad layer (`mullvad-daemon`) contains all Mullvad-specific functionality:
+
+- API communication with `api.mullvad.net`
+- Account and device management
+- Relay selection algorithm
+- User settings and preferences
+- Management interface (gRPC API)
+- Custom Mullvad features (DAITA, multihop, etc.)
+
+### Key Components
+
+#### Daemon
+
+The daemon (`mullvad-daemon/src/lib.rs`) is the main system service that:
+
+- Receives commands from frontends (GUI, CLI) via management interface
+- Manages tunnel state through Talpid
+- Handles API communication
+- Persists settings and state
+- Coordinates asynchronous operations across components
+
+Reference: `mullvad-daemon/src/lib.rs`
+
+#### API Communication
+
+The Mullvad layer handles all communication with Mullvad's API:
+
+- REST API requests to `api.mullvad.net`
+- Account operations (create, login, voucher redemption)
+- Device management
+- Relay list updates
+- Version checks and app updates
+
+See [API Communication](/architecture/components/api-communication) for details.
+
+Reference: `mullvad-daemon/src/api.rs`
+
+#### Relay Selection
+
+The relay selector (`mullvad-relay-selector`) implements Mullvad's specific relay selection logic:
+
+- Filtering relays by location, provider, ownership
+- Constraint evaluation
+- Weighted random selection
+- DAITA compatibility checks
+- Multihop configuration
+
+See [Relay Selector](/architecture/components/relay-selector) for details.
+
+Reference: `mullvad-relay-selector/src/relay_selector.rs`
+
+#### Management Interface
+
+The gRPC management interface exposes daemon functionality to frontends:
+
+- Tunnel control (connect, disconnect, reconnect)
+- Settings management
+- Account and device operations
+- Event streaming
+- Split tunneling configuration
+
+See [Management Interface](/architecture/components/management-interface) for details.
+
+Reference: `mullvad-management-interface/proto/management_interface.proto`
+
+### Mullvad-Specific Features
+
+- **DAITA** (Defense Against AI-guided Traffic Analysis): Traffic analysis resistance
+- **Quantum-resistant tunnels**: Post-quantum key encapsulation
+- **Multihop**: Multiple relay hops for enhanced privacy
+- **Custom lists**: User-defined relay groupings
+- **Access methods**: API censorship circumvention
+- **Lockdown mode**: Block all traffic when not connected
+
+## Interaction Between Layers
+
+### Command Flow
+
+1. **Frontend → Management Interface**: User action (e.g., "Connect")
+2. **Management Interface → Daemon**: gRPC request processed
+3. **Daemon → Relay Selector**: Select appropriate relay
+4. **Daemon → API**: Fetch latest relay list if needed
+5. **Daemon → Talpid**: Send `TunnelCommand::Connect` with parameters
+6. **Talpid**: Execute tunnel state machine transitions
+7. **Talpid → Daemon**: Emit `TunnelStateTransition` events
+8. **Daemon → Frontend**: Stream state updates via management interface
+
+### Data Flow
+
+- **Settings**: Stored by Mullvad layer, used to configure Talpid operations
+- **Relay List**: Fetched from Mullvad API, processed by relay selector, passed to Talpid
+- **Tunnel Parameters**: Generated by Mullvad, executed by Talpid
+- **State Transitions**: Emitted by Talpid, processed and broadcast by Mullvad
+
+## Why This Separation?
+
+### Benefits
+
+1. **Modularity**: Talpid can be used independently or with other VPN providers
+2. **Testability**: Generic VPN logic can be tested separately from Mullvad-specific features
+3. **Security**: Clear boundaries between trusted system-level operations and business logic
+4. **Maintainability**: Changes to Mullvad features don't affect core VPN functionality
+5. **Platform Support**: Talpid provides unified abstractions across different operating systems
+
+### Design Principles
+
+- **Talpid knows nothing about Mullvad**: It receives generic tunnel parameters
+- **Mullvad knows about Talpid**: It orchestrates Talpid to implement Mullvad features
+- **Single responsibility**: Each layer has clearly defined responsibilities
+- **Loose coupling**: Layers communicate through well-defined interfaces
+
+## Code Organization
+
+### Talpid Crates
+
+```
+talpid-core/          # Core state machine and platform integration
+talpid-types/         # Common type definitions
+talpid-wireguard/     # WireGuard tunnel implementation
+talpid-routing/       # Route management
+talpid-dns/           # DNS configuration
+talpid-windows/       # Windows-specific code
+talpid-macos/         # macOS-specific code
+```
+
+### Mullvad Crates
+
+```
+mullvad-daemon/                 # Main daemon/system service
+mullvad-api/                    # API client
+mullvad-relay-selector/         # Relay selection logic
+mullvad-management-interface/   # gRPC interface
+mullvad-types/                  # Mullvad-specific types
+mullvad-cli/                    # Command-line interface
+```
+
+## Related Documentation
+
+- [Management Interface](/architecture/components/management-interface)
+- [Relay Selector](/architecture/components/relay-selector)
+- [API Communication](/architecture/components/api-communication)
+- [Offline Detection](/architecture/components/offline-detection)
+- [Architecture Overview](/docs/architecture.md) (source repository)

@@ -1,0 +1,372 @@
+---
+title: Building the App
+description: Build Mullvad VPN from source for all supported platforms
+---
+
+## Overview
+
+This guide covers building the Mullvad VPN app from source for desktop (Windows, macOS, Linux), Android, and iOS platforms.
+
+## Prerequisites
+
+### All Platforms
+
+#### Rust Toolchain
+
+Get the latest stable Rust toolchain via [rustup.rs](https://rustup.rs/).
+
+Install default targets and components for your platform:
+
+```bash
+./scripts/setup-rust android|ios|windows|linux|macos
+```
+
+Optionally, install a git post-checkout hook that automatically runs setup-rust when the Rust version changes:
+
+```bash
+./scripts/setup-rust install-hook
+```
+
+#### Node.js and npm
+
+You need Node.js 22.21.1 and npm 11.7.0 (specified in the volta section of `desktop/package.json`).
+
+**Linux:**
+```bash
+# Follow instructions on volta.sh
+curl https://get.volta.sh | bash
+```
+
+**macOS:**
+```bash
+brew install volta && volta setup
+```
+
+**Windows:**
+Install the msi from [volta-cli/volta](https://github.com/volta-cli/volta)
+
+#### Go
+
+Install Go 1.21 or newer from [golang.org](https://golang.org/doc/install).
+
+#### Protobuf Compiler
+
+Install protobuf compiler version 3.15 or later:
+
+- **Linux:** `protobuf-compiler` package, plus:
+  - Fedora: `protobuf-devel`
+  - Debian/Ubuntu: `libprotobuf-dev`
+- **macOS:** `brew install protobuf`
+- **Windows:** Download binaries from [GitHub](https://github.com/protocolbuffers/protobuf/releases) and add to PATH
+
+#### Bash
+
+**Bash 4.0 or later must be installed and available in PATH** on all platforms.
+
+- **Linux:** Usually installed by default
+- **macOS:** Install via Homebrew: `brew install bash` (default 3.2.5 is not supported)
+- **Windows:** Install [Git for Windows](https://git-scm.com/download/win) which includes Git Bash
+
+### Linux
+
+#### Debian/Ubuntu
+```bash
+# For building the daemon
+sudo apt install gcc libdbus-1-dev
+# For building the installer
+sudo apt install rpm
+```
+
+#### Fedora/RHEL
+```bash
+# For building the daemon
+sudo dnf install dbus-devel
+# For building the installer
+sudo dnf install rpm-build
+```
+
+#### Cross-compiling for ARM64
+
+```bash
+# Debian
+sudo dpkg --add-architecture arm64
+sudo apt update
+sudo apt install libdbus-1-dev:arm64 gcc-aarch64-linux-gnu
+
+rustup target add aarch64-unknown-linux-gnu
+```
+
+Add to `~/.cargo/config.toml`:
+```toml
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+[target.aarch64-unknown-linux-gnu.dbus]
+rustc-link-search = ["/usr/aarch64-linux-gnu/lib"]
+rustc-link-lib = ["dbus-1"]
+```
+
+#### Nix Devshell
+
+Supported on Linux (x86_64) and macOS (x86_64 and aarch64):
+
+```bash
+nix develop
+```
+
+Optionally use [direnv](https://direnv.net/) for automatic sourcing:
+```bash
+direnv allow .
+```
+
+### Windows
+
+Required components:
+
+- **Build Tools for Visual Studio 2022** (or Visual Studio 2022 Community/Pro)
+- **Windows 10/11 SDK**
+- **Bash** and Unix utilities (see All Platforms section)
+- **zig** 0.14 or later, available in PATH: [ziglang.org/download](https://ziglang.org/download/)
+- **msbuild.exe** available in PATH:
+  ```
+  C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\<arch>
+  ```
+  Or source `vcvars.sh`: `. ./scripts/vcvars.sh`
+
+- **x86 target** for NSIS plugins:
+  ```bash
+  rustup target add i686-pc-windows-msvc
+  ```
+
+#### Cross-compiling for ARM64
+
+Requirements:
+- ARM64 MSVC tools in Visual Studio
+- `clang` on PATH
+- ARM64 Rust target:
+  ```bash
+  rustup target add aarch64-pc-windows-msvc
+  ```
+
+#### Compiling on Windows ARM
+
+Additional requirements:
+- `clang` from Visual Studio in PATH
+- Correct `INCLUDE` environment variable (run `vcvarsall.bat arm64` or source `vcvars.sh`)
+- x64 grpc-tools binaries:
+  ```bash
+  pushd desktop/packages/mullvad-vpn
+  npm install --target_arch=x64 grpc-tools
+  popd
+  ```
+
+### macOS
+
+Required:
+- Recent version of bash (not the default 3.2.57)
+- `clang` for CGo
+
+### Android
+
+See the [Android Build Instructions](https://github.com/mullvad/mullvadvpn-app/blob/main/android/docs/BuildInstructions.md) for detailed setup including:
+- JDK 17
+- Android SDK and NDK
+- Android-specific Rust targets
+
+### iOS
+
+Required dependencies:
+- Go 1.21: `brew install go@1.21`
+- Rust with iOS targets: `./scripts/setup-rust ios`
+- Protobuf compiler: `brew install protobuf`
+- Xcode configuration with team ID and provisioning profiles
+
+## Building the Complete App
+
+### Desktop Platforms
+
+The simplest way to build the entire app and generate an installer:
+
+```bash
+./build.sh [--optimize]
+```
+
+Add `--optimize` to enable compiler optimizations (longer build, smaller binaries).
+
+This produces an installer (exe, pkg, rpm, or deb) in the `dist/` directory.
+
+**Minimum memory requirement:** 1GB
+
+#### Target-Specific Builds
+
+**macOS Universal Binary:**
+```bash
+./build.sh --universal
+```
+
+**Linux ARM64:**
+```bash
+TARGETS="aarch64-unknown-linux-gnu" ./build.sh
+```
+
+**Windows ARM64:**
+```bash
+TARGETS="aarch64-pc-windows-msvc" ./build.sh
+```
+
+### Android
+
+**Containerized build (recommended):**
+```bash
+# Debug build
+../building/containerized-build.sh android --dev-build
+
+# Release build
+ANDROID_CREDENTIALS_DIR=/path/to/credentials ../building/containerized-build.sh android --app-bundle
+```
+
+**Manual build:**
+```bash
+# Debug build
+../android/build.sh --dev-build
+
+# Release build
+../android/build.sh --app-bundle
+```
+
+### iOS
+
+Configure Xcode project:
+```bash
+for file in ./ios/Configurations/*.template ; do cp $file ${file//.template/} ; done
+```
+
+Edit the generated `.xcconfig` files with your team ID and provisioning profiles.
+
+Then build through Xcode or command line tools.
+
+## Building Individual Components
+
+### Mullvad Daemon
+
+1. **macOS only:** Source environment variables:
+   ```bash
+   source env.sh
+   ```
+
+2. **Windows only:** Build C++ libraries:
+   ```bash
+   ./build-windows-modules.sh
+   cp dist-assets/binaries/x86_64-pc-windows-msvc/wintun.dll target/debug/
+   ```
+
+3. Build the daemon:
+   ```bash
+   cargo build
+   ```
+
+4. **Windows only:** Run as SYSTEM user using [PsExec](https://docs.microsoft.com/en-us/sysinternals/downloads/psexec):
+   ```
+   psexec64 -i -s bash.exe
+   ```
+
+5. Run the daemon:
+   ```bash
+   # Linux/macOS
+   sudo MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+   
+   # Windows (already in SYSTEM shell)
+   MULLVAD_RESOURCE_DIR="./dist-assets" ./target/debug/mullvad-daemon -vv
+   ```
+
+### Desktop Electron App
+
+1. Navigate to desktop directory:
+   ```bash
+   cd desktop
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install -w mullvad-vpn
+   ```
+
+3. Start in development mode:
+   ```bash
+   npm run -w mullvad-vpn develop
+   ```
+
+Changes to JavaScript files will automatically reload.
+
+**Note:** The Electron app requires a running daemon to connect to.
+
+## Development Commands
+
+### Desktop/Electron
+
+```bash
+npm run develop          # Develop with live-reload
+npm run lint            # Lint code
+npm run pack:<OS>       # Package for distribution (linux/mac/win)
+npm test                # Run tests
+```
+
+### Rust/Cargo
+
+```bash
+cargo build             # Build daemon and tools
+cargo test              # Run tests
+cargo build --release   # Optimized release build
+cargo build --workspace # Build all workspace crates
+```
+
+## Special Build Cases
+
+### ARM64 Linux Hosts
+
+Due to protobuf limitations, building on ARM64 Linux requires a 2-stage process:
+
+1. Build proto files on non-ARM64 platform:
+   ```bash
+   cd desktop
+   npm ci -w mullvad-vpn
+   npm run -w mullvad-vpn build-proto
+   ```
+
+2. Copy proto files from:
+   - `desktop/packages/mullvad-vpn/src/main/management_interface/`
+   - `desktop/packages/mullvad-vpn/build/src/main/management_interface/`
+
+3. Build on ARM64 with proto files:
+   ```bash
+   MANAGEMENT_INTERFACE_PROTO_BUILD_DIR=/path/to/proto ./build.sh --dev-build
+   ```
+
+   May also need: `USE_SYSTEM_FPM=true`
+
+## Troubleshooting
+
+### Build requires at least 1GB memory
+
+If builds fail with memory errors, ensure your system has adequate RAM or increase swap space.
+
+### Protobuf compiler not found
+
+Ensure `protoc` is in your PATH and version 3.15+:
+```bash
+protoc --version
+```
+
+### Node/npm version mismatch
+
+Use Volta to automatically manage Node.js versions:
+```bash
+volta install node@22.21.1
+```
+
+### Bash version too old (macOS)
+
+The default macOS bash (3.2.5) is too old. Install bash 4.0+:
+```bash
+brew install bash
+```

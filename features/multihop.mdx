@@ -1,0 +1,474 @@
+---
+title: 'WireGuard Multihop'
+description: 'Route your traffic through two VPN servers for enhanced privacy and anonymity'
+---
+
+## Overview
+
+WireGuard multihop routes your VPN traffic through **two servers** instead of one, adding an extra layer of privacy and making it significantly harder to trace your connection back to you.
+
+With multihop:
+- Traffic goes: **Your Device → Entry Server → Exit Server → Internet**
+- Entry server knows your real IP but not your destination
+- Exit server knows your destination but not your real IP
+- No single server sees both your identity and your activity
+
+<Note>
+Multihop is available on all platforms: Windows, Linux, macOS, Android, and iOS.
+</Note>
+
+## How Multihop Works
+
+### Connection Flow
+
+```
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+│  Your Device  │──────►│ Entry Server │──────►│  Exit Server  │─────► Internet
+└──────────────┘       └──────────────┘       └──────────────┘
+  Real IP              Encrypted          Encrypted
+                       Tunnel #1          Tunnel #2
+```
+
+### Double Encryption
+
+Multihop uses **nested WireGuard tunnels**:
+
+1. **Outer tunnel**: Your device → Entry server (first layer of encryption)
+2. **Inner tunnel**: Entry server → Exit server (second layer of encryption)
+3. **Your traffic**: Encrypted twice until it reaches the exit server
+
+<Info>
+The entry server cannot see your final destination because it's encrypted in the inner tunnel. The exit server cannot see your real IP because you're connecting from the entry server.
+</Info>
+
+### Privacy Benefits
+
+| What They Know | Entry Server | Exit Server |
+|----------------|--------------|-------------|
+| Your real IP address | ✅ Yes | ❌ No (sees entry server IP) |
+| Your destination | ❌ No (encrypted) | ✅ Yes |
+| Your traffic content | ❌ No (encrypted) | ❌ No (encrypted by HTTPS/TLS) |
+
+## Enabling Multihop
+
+### Using the GUI
+
+<Steps>
+  <Step title="Open Multihop Settings">
+    Navigate to **Settings** → **VPN settings** → **Multihop**
+  </Step>
+  
+  <Step title="Enable Multihop">
+    Toggle **Enable** to **On**
+  </Step>
+  
+  <Step title="Select Servers (Optional)">
+    - **Entry server**: First hop (closer to your location)
+    - **Exit server**: Final hop (where your traffic exits)
+    - Leave on **Auto** for optimal selection
+  </Step>
+  
+  <Step title="Reconnect">
+    The app will reconnect through two servers
+  </Step>
+</Steps>
+
+### Using the CLI
+
+```bash
+# Enable multihop
+mullvad relay set tunnel wireguard use-multihop on
+
+# Disable multihop
+mullvad relay set tunnel wireguard use-multihop off
+
+# Set specific entry location (Sweden)
+mullvad relay set location se entry-location gb
+
+# Use automatic entry server selection
+mullvad relay set location se entry-location any
+
+# Check multihop status
+mullvad relay get
+```
+
+### Verify Multihop is Active
+
+```bash
+mullvad status -v
+```
+
+Output should show both entry and exit servers:
+```
+Connected to gb-lon-wg-001 via se-sto-wg-001
+Entry: se-sto-wg-001 (10.8.0.1)
+Exit: gb-lon-wg-001 (10.8.0.2)
+```
+
+## Server Selection
+
+### Automatic Selection
+
+Mullvad automatically chooses optimal servers based on:
+- **Geographic proximity**: Entry server closer to you
+- **Load balancing**: Distributes load across servers
+- **Compatibility**: Ensures both servers support required features
+
+### Manual Selection
+
+<Tabs>
+  <Tab title="Select Both Servers">
+    Choose specific entry and exit locations:
+    
+    ```bash
+    # Exit in London, entry in Stockholm
+    mullvad relay set location gb lon entry-location se sto
+    ```
+  </Tab>
+  
+  <Tab title="Select Exit Only">
+    Specify exit server, auto-select entry:
+    
+    ```bash
+    # Exit in US, automatic entry selection
+    mullvad relay set location us
+    ```
+  </Tab>
+  
+  <Tab title="Select Entry Only">
+    Specify entry server, auto-select exit:
+    
+    ```bash
+    # Entry in Sweden, automatic exit selection
+    mullvad relay set location any entry-location se
+    ```
+  </Tab>
+</Tabs>
+
+### Server Pairing Rules
+
+<Warning>
+Entry and exit servers **must be different**. The app will reject configurations where both servers are the same.
+</Warning>
+
+Additional constraints:
+- Entry and exit servers must both support WireGuard
+- Both servers must support required features (DAITA, quantum resistance, etc.)
+- Some obfuscation protocols may limit server selection
+
+## Performance Impact
+
+### Expected Overhead
+
+- **Latency**: Additional 20-50ms due to extra hop
+- **Speed**: Slight reduction (typically 10-20%) from double encryption
+- **Connection time**: Longer initial connection (extra tunnel setup)
+
+### Factors Affecting Performance
+
+1. **Geographic distance**: Greater distance between servers = higher latency
+2. **Server load**: Congested servers impact speed
+3. **Network path**: Quality of connection between entry and exit servers
+
+<Info>
+For optimal performance, choose entry and exit servers in nearby regions. For example: Germany → Netherlands instead of Australia → USA.
+</Info>
+
+### Bandwidth Considerations
+
+Multihop uses approximately:
+- **1.05x bandwidth** of single-hop (minimal overhead from tunnel headers)
+- Same encryption efficiency (no extra padding unless DAITA enabled)
+
+## Use Cases
+
+### When to Use Multihop
+
+✅ **Recommended for:**
+- High-risk journalism or whistleblowing
+- Accessing content in restricted countries
+- Maximum anonymity requirements
+- Protecting against compromised servers
+- Evading advanced traffic analysis
+
+### When Single-Hop is Sufficient
+
+❌ **Not necessary for:**
+- Casual browsing or streaming
+- Basic privacy protection
+- Performance-critical applications (gaming, video calls)
+- Limited bandwidth situations
+
+## Compatibility with Other Features
+
+Multihop works with:
+
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [DAITA](/features/daita) (applied to entry server)
+- ✅ [Obfuscation protocols](/features/obfuscation)
+- ✅ [Custom DNS](/features/custom-dns)
+- ✅ [Content blockers](/features/content-blockers)
+- ✅ [Split tunneling](/features/split-tunneling)
+
+### Multihop with DAITA
+
+When using DAITA with multihop:
+- **DAITA is applied at the entry server**
+- Entry server must support DAITA
+- Exit server does not need DAITA support
+- "Direct only" mode affects entry server selection
+
+```bash
+# Enable both features
+mullvad relay set tunnel wireguard use-multihop on
+mullvad relay set tunnel wireguard daita on
+```
+
+<Note>
+With DAITA's "Direct only" disabled, the app may automatically enable multihop when you select a non-DAITA server to ensure DAITA protection.
+</Note>
+
+### Multihop with Quantum Resistance
+
+```bash
+# Maximum security: Multihop + Quantum resistance
+mullvad relay set tunnel wireguard use-multihop on
+mullvad relay set tunnel wireguard quantum-resistant on
+```
+
+Both entry and exit tunnels will use quantum-resistant PSK exchange.
+
+### Multihop with Obfuscation
+
+Obfuscation applies to the **outer tunnel** (device → entry server):
+
+```bash
+# Multihop over TCP obfuscation
+mullvad relay set tunnel wireguard use-multihop on
+mullvad relay set obfuscation mode udp2tcp
+```
+
+## Security Considerations
+
+### Threat Model
+
+Multihop protects against:
+- **Compromised single server**: No single server sees full picture
+- **Correlation attacks**: Harder to link entry and exit traffic
+- **Surveillance at exit point**: Your real IP is hidden
+- **Traffic analysis**: Additional obfuscation layer
+
+### What Multihop Does NOT Protect Against
+
+<Warning>
+**Multihop does not protect against:**
+- Compromise of both entry AND exit servers
+- Timing correlation attacks if adversary controls both servers
+- Traffic analysis if both servers are compromised
+- Global passive adversary monitoring all network links
+</Warning>
+
+### Mullvad's No-Logs Policy
+
+Important notes:
+- Mullvad operates both servers (entry and exit)
+- Same privacy policy applies to all servers
+- No logs kept on any server
+- No cross-correlation between servers
+
+<Info>
+Multihop adds defense-in-depth but does not replace Mullvad's fundamental privacy guarantees. Both single-hop and multihop benefit from Mullvad's strict no-logs policy.
+</Info>
+
+## Troubleshooting
+
+### Connection Issues
+
+If multihop connection fails:
+
+1. **Check server availability**
+   ```bash
+   mullvad relay list
+   ```
+
+2. **Try automatic selection**
+   ```bash
+   mullvad relay set location any entry-location any
+   ```
+
+3. **Disable temporarily**
+   ```bash
+   mullvad relay set tunnel wireguard use-multihop off
+   ```
+
+4. **Check for conflicting settings**
+   - Ensure entry and exit servers are different
+   - Verify both servers support required features
+
+### Performance Issues
+
+If experiencing slow speeds:
+
+1. **Choose closer servers**: Reduce geographic distance
+   ```bash
+   mullvad relay set location de entry-location nl
+   ```
+
+2. **Check server load**: Try different servers
+   ```bash
+   mullvad relay set location se entry-location fi
+   ```
+
+3. **Disable unnecessary features**: If DAITA is enabled, consider disabling for better performance
+
+### Entry Server Override
+
+When DAITA's "Direct only" is disabled:
+
+> "The entry server for Multihop is currently overridden by DAITA."
+
+This means DAITA is automatically selecting the entry server to ensure DAITA coverage. To manually select the entry server:
+
+```bash
+# Option 1: Enable "Direct only"
+mullvad relay set tunnel wireguard daita-direct-only on
+
+# Option 2: Disable DAITA
+mullvad relay set tunnel wireguard daita off
+```
+
+## Best Practices
+
+### Optimal Server Placement
+
+<Tabs>
+  <Tab title="Maximum Anonymity">
+    Entry and exit in different countries:
+    ```bash
+    mullvad relay set location us entry-location se
+    ```
+  </Tab>
+  
+  <Tab title="Balanced Performance">
+    Entry and exit in neighboring countries:
+    ```bash
+    mullvad relay set location de entry-location nl
+    ```
+  </Tab>
+  
+  <Tab title="Content Access">
+    Exit in target country, entry nearby:
+    ```bash
+    mullvad relay set location gb entry-location fr
+    ```
+  </Tab>
+</Tabs>
+
+### Combining Features
+
+For maximum protection:
+
+```bash
+# Ultimate security configuration
+mullvad relay set tunnel wireguard use-multihop on
+mullvad relay set tunnel wireguard quantum-resistant on
+mullvad relay set tunnel wireguard daita on
+mullvad relay set tunnel wireguard daita-direct-only on
+```
+
+<Warning>
+Enabling all features maximizes security but significantly impacts performance. Evaluate your threat model and performance requirements.
+</Warning>
+
+## Technical Details
+
+### Connection Configuration
+
+From the source code (talpid-types/src/net/wireguard.rs:59-69):
+
+```rust
+pub struct ConnectionConfig {
+    pub tunnel: TunnelConfig,
+    pub peer: PeerConfig,        // Entry peer
+    pub exit_peer: Option<PeerConfig>,  // Exit peer (multihop)
+    pub ipv4_gateway: Ipv4Addr,
+    pub ipv6_gateway: Option<Ipv6Addr>,
+}
+```
+
+When `exit_peer` is `Some`, multihop is active.
+
+### Endpoint Information
+
+The entry endpoint is the first hop that receives your traffic:
+
+```rust
+pub fn get_next_hop_endpoints(&self) -> Vec<Endpoint> {
+    // Returns entry server endpoint for multihop
+    // Or direct server endpoint for single-hop
+}
+```
+
+### Relay Selection Logic
+
+The relay selector ensures:
+- Entry and exit servers are different
+- Both support required features (WireGuard, DAITA, etc.)
+- Compatible with obfuscation settings
+- Optimal based on location constraints
+
+## Platform-Specific Notes
+
+### Windows
+- Full multihop support
+- Native WireGuard driver (wireguard-nt)
+
+### Linux
+- Full multihop support
+- Kernel module or userspace (wireguard-go)
+
+### macOS
+- Full multihop support
+- Kernel extension
+
+### Android
+- Full multihop support
+- May impact battery life more than single-hop
+- Consider power management settings
+
+### iOS
+- Full multihop support
+- Efficient implementation
+- Minimal battery impact beyond single-hop
+
+## Migration and Settings
+
+### Upgrading from Single-Hop
+
+Existing connections:
+1. Enable multihop in settings
+2. App automatically disconnects and reconnects
+3. Previous server becomes exit server (if compatible)
+4. Entry server automatically selected
+
+### Settings Persistence
+
+Multihop configuration persists across:
+- App restarts
+- Device reboots
+- App updates
+- Server list updates
+
+## Related Features
+
+- [WireGuard Protocol](/features/wireguard) - Base VPN protocol
+- [DAITA](/features/daita) - Traffic analysis protection (applied to entry)
+- [Quantum-Resistant Tunnels](/features/quantum-resistant) - Post-quantum crypto on both hops
+- [Obfuscation](/features/obfuscation) - Applied to entry connection
+- [Local Network Access](/features/local-network-access) - Works with multihop
+
+## Further Reading
+
+- [Mullvad's Multihop Announcement](https://mullvad.net/en/blog/tag/multihop)
+- [WireGuard Protocol](https://www.wireguard.com/)
+- [Threat Modeling for VPN Users](https://mullvad.net/en/help/)

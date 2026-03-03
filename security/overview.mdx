@@ -1,0 +1,160 @@
+---
+title: Security & Privacy Overview
+description: Comprehensive overview of Mullvad VPN's security architecture and privacy guarantees
+---
+
+Mullvad VPN is designed with security and privacy as core principles. The app ensures that all network traffic travels through an encrypted VPN tunnel and provides strong guarantees against traffic leaks.
+
+## Core Security Principles
+
+The main purpose of the app is to allow users to make all network and internet traffic to and from the device travel via an encrypted VPN tunnel. The app achieves this through:
+
+1. **Tight firewall integration** on desktop platforms (WFP, PF, nftables)
+2. **Always-on kill switch** that prevents leaks during connection changes
+3. **Atomic firewall rule transactions** with no inconsistent time windows
+4. **State machine-driven security** that enforces policies in every state
+
+<Note>
+The app employs different security mechanisms on desktop versus mobile platforms due to OS API limitations. Desktop systems use direct firewall manipulation, while mobile platforms use VPN Service APIs.
+</Note>
+
+## Platform-Specific Security
+
+### Desktop Security (Windows, macOS, Linux)
+
+Desktop operating systems provide the strongest security guarantees through direct firewall integration:
+
+- **Windows**: Uses Windows Filtering Platform (WFP) with sublayer-based design
+- **macOS**: Uses Packet Filter (PF) with atomic rule transactions
+- **Linux**: Uses nftables with atomic rule transactions and early-boot protection
+
+All desktop platforms apply firewall rules as atomic transactions, ensuring there is no time window of inconsistent or invalid rules during changes.
+
+### Mobile Security (Android, iOS)
+
+<Warning>
+Mobile platforms have inherent limitations due to restricted OS APIs. Apps cannot directly manipulate the firewall, routing table, or DNS settings.
+</Warning>
+
+#### Android
+
+On Android, the VPN Service API routes all traffic through the app by setting the routes `0/0` and `::0/0`. The app blocks all traffic in connecting, disconnecting, and error states.
+
+**Known Android Limitations:**
+- Connectivity checks (DNS and HTTP(S)) are exempt by the system
+- Network-provided time (NTP) bypasses VPN
+- Traffic to/from hotspot clients may leak
+- These exemptions occur even with "Block connections without VPN" enabled
+
+See the [Mullvad blog](https://mullvad.net/blog/2022/10/10/android-leaks-connectivity-check-traffic) for more details on Android limitations.
+
+#### iOS
+
+On iOS, a designated packet tunnel process handles network packet flow. The iOS implementation delegates traffic handling to WireGuard-go, which works directly with the tun interface. All traffic flows through the tunnel via routing rules configured by the packet tunnel extension.
+
+## Security Through State Management
+
+The app uses a **tunnel state machine** to enforce security policies. Each state has specific security guarantees:
+
+- **Disconnected**: No firewall rules (unless lockdown mode is enabled)
+- **Connecting**: Only allows traffic to the VPN server endpoint
+- **Connected**: All traffic flows through the encrypted tunnel
+- **Disconnecting**: Maintains previous state's security policy during teardown
+- **Error**: Blocks all traffic when tunnel cannot be established
+
+Learn more about [tunnel states and security guarantees](/security/tunnel-states).
+
+## Always-Allowed Traffic
+
+Regardless of tunnel state, certain traffic is always permitted:
+
+1. **Loopback traffic**: All traffic on loopback adapters is always allowed
+2. **DHCPv4 and DHCPv6**: Required for network configuration
+3. **Subset of NDP**: Neighbor Discovery Protocol for IPv6 operation
+4. **Mullvad API**: Allowed in all states for key updates and account management
+
+When "Allow LAN" is enabled, traffic to private IP ranges and local multicast addresses is also permitted.
+
+## DNS Security
+
+DNS requests reveal detailed information about user activity, making DNS leak protection critical:
+
+- All DNS requests are sent inside the VPN tunnel
+- DNS queries only go to the VPN relay server by default
+- Custom DNS servers can be configured (queries still go through tunnel)
+- DNS to non-tunnel addresses is blocked in the Connected state
+- Private/loopback custom DNS addresses bypass the tunnel
+
+This ensures your ISP or network provider cannot see your DNS queries.
+
+## API Security
+
+All Mullvad API connections use:
+
+- **TLS 1.3** with certificate pinning
+- Bundled Let's Encrypt root certificate
+- Validation of certificates issued to `api.mullvad.net`
+- API bypass in non-connected states (Windows restricts to Mullvad processes)
+
+## Kill Switch
+
+Mullvad VPN has an **always-on kill switch** that cannot be disabled. This is not a red button engaged when problems arise—it's a proactive security feature:
+
+<Warning>
+The kill switch is always active. Whenever the app leaves the Disconnected state, strict firewall rules are applied and maintained until an explicit user disconnect is requested.
+</Warning>
+
+- Firewall rules are applied atomically with no time windows of vulnerability
+- Traffic is blocked if the tunnel fails, rather than "failing open"
+- Prevents leaks during server changes or unexpected tunnel loss
+
+Learn more about the [kill switch and lockdown mode](/security/kill-switch).
+
+## Regular Security Audits
+
+Mullvad performs third-party security audits of the entire app every two years, plus specialized audits for specific features:
+
+- **2018**: Cure53 & Assured (7 issues found)
+- **2020**: Cure53 (7 issues found, rated as "very positive")
+- **2022**: Atredis Partners (5 findings, no high/critical severity)
+- **2024**: X41 D-Sec (6 vulnerabilities, 3 high severity, all fixed)
+- **2025**: NCC Group MASA certification (Android app passed all controls)
+
+All audit reports are publicly available. See the [security audits page](/security/audits) for details.
+
+## Threat Model
+
+The app is designed to protect against:
+
+- **Network-based attacks**: Preventing traffic leaks and deanonymization
+- **Traffic analysis**: Encrypted tunnel prevents ISP/network monitoring
+- **DNS leaks**: All DNS queries go through the tunnel
+- **Kill switch failures**: Always-on protection during connection issues
+
+**Out of scope:**
+- Locally running malicious programs with local access
+- Malware with root/administrator privileges
+- Physical access to the device
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Leak Protection" icon="shield-check" href="/security/leak-protection">
+    Learn how Mullvad prevents traffic leaks in all scenarios
+  </Card>
+  <Card title="Firewall Integration" icon="firewall" href="/security/firewall">
+    Technical details on WFP, PF, and nftables implementation
+  </Card>
+  <Card title="Kill Switch" icon="power-off" href="/security/kill-switch">
+    Understand the always-on kill switch and lockdown mode
+  </Card>
+  <Card title="Tunnel States" icon="diagram-project" href="/security/tunnel-states">
+    Explore the state machine and security guarantees
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+- [Architecture Overview](/architecture/overview) - System design and components
+- [Security Audits](/security/audits) - External security assessments
+- [Known Issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md) - Platform-specific limitations

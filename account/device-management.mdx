@@ -1,0 +1,472 @@
+---
+title: Device Management
+description: Manage devices associated with your Mullvad account and understand device limits
+---
+
+Mullvad accounts support multiple devices simultaneously. This guide covers device registration, limits, and management.
+
+## Device System Overview
+
+Each Mullvad account can have up to **5 active devices** at a time. When you log in, the daemon:
+
+1. Generates a unique WireGuard keypair for the device
+2. Creates a device entry with a random name (e.g., "Happy Seagull")
+3. Registers the device with your account via the API
+4. Associates the public key with the device
+
+<Info>
+Devices are the fundamental unit of VPN connections. Each device has its own WireGuard keys and configuration.
+</Info>
+
+## Device Properties
+
+Every device has the following attributes:
+
+- **Device ID**: Unique identifier (UUID format)
+- **Device Name**: Human-readable random name for easy identification
+- **Public Key**: WireGuard public key for this device
+- **Created**: Timestamp when device was registered
+- **DNS Hijacking**: Whether the device hijacks DNS queries (typically `false`)
+
+## Device Limits
+
+### Maximum Devices
+
+Mullvad enforces a **5-device limit per account**. When you reach this limit:
+
+- Login attempts fail with `MAX_DEVICES_REACHED` error
+- You must remove an existing device before adding a new one
+- Connection attempts show: "This account has too many simultaneous connections"
+
+<Warning>
+If you get a "too many connections" error (`TOO_MANY_CONNECTIONS`), you've hit the device limit. Remove unused devices to free up slots.
+</Warning>
+
+### Error Messages
+
+| Error Code | Error Type | Message |
+|------------|------------|----------|
+| `MAX_DEVICES_REACHED` | API Error | Failed to create device - account at device limit |
+| `TOO_MANY_CONNECTIONS` | Auth Failed | "This account has too many simultaneous connections. Disconnect another device or try connecting again shortly." |
+
+## Listing Devices
+
+View all devices associated with an account.
+
+### List Your Current Account's Devices
+
+```bash
+mullvad account list-devices
+```
+
+Output:
+```
+Devices on the account:
+Happy Seagull
+Brave Dolphin  
+Wise Penguin
+Swift Eagle
+Gentle Bear
+```
+
+### List Another Account's Devices
+
+Specify an account number to view its devices:
+
+```bash
+mullvad account list-devices -a 1234567890123456
+```
+
+<Note>
+You must have valid credentials for the specified account to list its devices.
+</Note>
+
+### Verbose Device Information
+
+Get detailed information about each device:
+
+```bash
+mullvad account list-devices -v
+```
+
+Output:
+```
+Devices on the account:
+
+Name      : Happy Seagull
+Id        : abc123def456
+Public key: wQEbFGkz9t2eR7L4xPmN6vK5cDaB0sXyJ8iU3hV/gW9=
+Created   : 2026-03-01 14:20:00 -05:00
+
+Name      : Brave Dolphin
+Id        : xyz789uvw012  
+Public key: nR5tYvB8kL2xQmP0zDwF7eS3gH6iJ4uO9pC1aV/fK8=
+Created   : 2026-02-15 09:45:00 -05:00
+```
+
+## Removing Devices
+
+Free up device slots by removing devices you no longer use.
+
+<Steps>
+  <Step title="Identify the Device">
+    List devices to find the name or ID:
+
+    ```bash
+    mullvad account list-devices
+    ```
+
+    Note the device name (e.g., "Wise Penguin") or ID.
+  </Step>
+
+  <Step title="Revoke the Device">
+    Remove by name (case-insensitive):
+
+    ```bash
+    mullvad account revoke-device "Wise Penguin"
+    ```
+
+    Or remove by device ID:
+
+    ```bash
+    mullvad account revoke-device abc123def456
+    ```
+
+    Output:
+    ```
+    Removed device
+    ```
+  </Step>
+
+  <Step title="Verify Removal">
+    Confirm the device is gone:
+
+    ```bash
+    mullvad account list-devices
+    ```
+
+    The device should no longer appear in the list.
+  </Step>
+</Steps>
+
+### Remove Device from Another Account
+
+Specify the account number to remove devices from a different account:
+
+```bash
+mullvad account revoke-device "Old Laptop" -a 1234567890123456
+```
+
+### What Happens When a Device is Removed
+
+The `RemoveDevice` RPC:
+
+1. **Deletes** the device entry from the account
+2. **Invalidates** the device's WireGuard keys
+3. **Frees** a device slot immediately
+4. **Emits** a `RemoveDeviceEvent` to notify other components
+
+<Warning>
+Revoking a device immediately disconnects it from the VPN. The device will show a "device revoked" state and must log in again to reconnect.
+</Warning>
+
+## Device States
+
+Devices can be in one of three states:
+
+### Logged In (`LOGGED_IN`)
+
+Device is active and can connect to the VPN.
+
+```bash
+mullvad account get
+```
+```
+Mullvad account:    1234567890123456
+Expires at:         2026-04-15 10:30:00 -05:00
+Device name:        Happy Seagull
+```
+
+### Logged Out (`LOGGED_OUT`)  
+
+No device is registered for this installation.
+
+```bash
+mullvad account get
+```
+```
+Not logged in on any account
+```
+
+### Revoked (`REVOKED`)
+
+Device was removed from the account (by you or another device).
+
+```bash
+mullvad account get
+```
+```
+The current device has been revoked
+Mullvad account: 1234567890123456
+```
+
+## Updating Devices
+
+Refresh device information from the API.
+
+### Manual Device Update
+
+The `UpdateDevice` RPC syncs device state with the API:
+
+```bash
+# Automatically called by:
+mullvad account get
+```
+
+This checks:
+- Whether the device still exists on the account
+- If the account has expired
+- Current device configuration
+
+<Info>
+The daemon calls `UpdateDevice` automatically before most operations. You rarely need to trigger this manually.
+</Info>
+
+## Device Events
+
+The daemon emits `DeviceEvent` notifications when device state changes:
+
+### Event Causes
+
+| Cause | Description | Enum Value |
+|-------|-------------|------------|
+| **Logged In** | User logged into account and created device | `LOGGED_IN` |
+| **Logged Out** | User logged out and removed device | `LOGGED_OUT` |
+| **Revoked** | Device removed remotely (not found on API) | `REVOKED` |
+| **Updated** | Device information changed (not keys) | `UPDATED` |
+| **Rotated Key** | WireGuard key was rotated | `ROTATED_KEY` |
+
+### Device Event Structure
+
+```protobuf
+message DeviceEvent {
+  enum Cause {
+    LOGGED_IN = 0;
+    LOGGED_OUT = 1;
+    REVOKED = 2;
+    UPDATED = 3;
+    ROTATED_KEY = 4;
+  }
+  Cause cause = 1;
+  DeviceState new_state = 2;
+}
+```
+
+### Remove Device Event
+
+Emitted when a device is explicitly removed via RPC (not during logout):
+
+```protobuf
+message RemoveDeviceEvent {
+  string account_number = 1;
+  repeated Device new_device_list = 2;  // Updated list after removal
+}
+```
+
+## Device API
+
+The device API provides several endpoints:
+
+### Create Device
+
+**Endpoint**: `POST /api/v1/accounts/devices`
+
+**Request Body**:
+```json
+{
+  "pubkey": "base64-encoded-wireguard-public-key",
+  "hijack_dns": false
+}
+```
+
+**Response** (201 Created):
+```json
+{
+  "id": "abc123def456",
+  "name": "Happy Seagull",
+  "pubkey": "wQEbFGkz9t2eR7L4xPmN6vK5cDaB0sXyJ8iU3hV/gW9=",
+  "ipv4_address": "10.64.0.1/32",
+  "ipv6_address": "fc00:bbbb:bbbb:bb01::1/128",
+  "hijack_dns": false,
+  "created": "2026-03-01T19:20:00Z"
+}
+```
+
+### List Devices
+
+**Endpoint**: `GET /api/v1/accounts/devices`
+
+**Response** (200 OK):
+```json
+[
+  {
+    "id": "abc123",
+    "name": "Happy Seagull",
+    "pubkey": "...",
+    "hijack_dns": false,
+    "created": "2026-03-01T19:20:00Z"
+  },
+  // ... more devices
+]
+```
+
+### Get Device
+
+**Endpoint**: `GET /api/v1/accounts/devices/{device_id}`
+
+**Response** (200 OK): Returns single device object.
+
+### Remove Device  
+
+**Endpoint**: `DELETE /api/v1/accounts/devices/{device_id}`
+
+**Response** (204 No Content): Device removed successfully.
+
+## Managing Many Devices
+
+Strategies for managing multiple devices effectively:
+
+### Regular Cleanup
+
+Periodically remove unused devices:
+
+```bash
+# List all devices
+mullvad account list-devices -v
+
+# Remove old devices you no longer use
+mullvad account revoke-device "Old Phone"
+mullvad account revoke-device "Work Laptop" 
+```
+
+### Device Naming
+
+While device names are randomly assigned, you can identify devices by:
+- **Public key**: Unique to each device
+- **Created date**: When device was registered
+- **Device ID**: Unique identifier
+
+<Tip>
+Keep notes of which device name corresponds to which physical device, especially if you frequently add/remove devices.
+</Tip>
+
+### Logout vs. Revoke
+
+**Logout** (from the device itself):
+```bash
+mullvad account logout
+```
+- Removes current device
+- Can only be done on the device itself
+- Proper cleanup method
+
+**Revoke** (from any device):
+```bash
+mullvad account revoke-device "Lost Phone"
+```  
+- Removes any device remotely
+- Useful for lost or stolen devices
+- Can be done from any logged-in device
+
+## Troubleshooting
+
+### Too Many Connections Error
+
+**Problem**: Can't connect or log in, seeing "too many simultaneous connections".
+
+**Solution**:
+1. List your devices: `mullvad account list-devices`
+2. Remove unused devices: `mullvad account revoke-device "Device Name"`
+3. Try logging in again
+
+### Device Not Found Error
+
+**Problem**: Trying to remove a device that doesn't exist.
+
+**Solution**:
+1. Verify the device name or ID: `mullvad account list-devices -v`
+2. Use exact name (case-insensitive) or device ID
+3. Ensure you're checking the correct account with `-a` flag
+
+### Device Revoked Unexpectedly
+
+**Problem**: Your device shows as revoked, but you didn't log out.
+
+**Possible Causes**:
+- Another device removed this one to free a slot
+- Account hit device limit and old device was auto-removed  
+- API sync issue
+
+**Solution**:
+1. Check current devices: `mullvad account list-devices`  
+2. Log in again: `mullvad account login`
+3. This creates a new device entry
+
+## Related Topics
+
+- [Account Management](/account/management) - Account creation and login
+- [Authentication](/account/authentication) - WireGuard key rotation
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `mullvad account list-devices` | List devices on current account |
+| `mullvad account list-devices -a <ACCOUNT>` | List devices on specified account |
+| `mullvad account list-devices -v` | List devices with verbose details |
+| `mullvad account revoke-device <NAME\|ID>` | Remove a device by name or ID |
+| `mullvad account revoke-device <NAME\|ID> -a <ACCOUNT>` | Remove device from specific account |
+
+## gRPC Service Reference
+
+| RPC | Request | Response | Description |
+|-----|---------|----------|-------------|
+| `GetDevice` | Empty | DeviceState | Get current device state |
+| `UpdateDevice` | Empty | Empty | Sync device state with API |
+| `ListDevices` | StringValue (account) | DeviceList | List all devices on account |
+| `RemoveDevice` | DeviceRemoval | Empty | Remove device from account |
+
+### Device Message
+
+```protobuf
+message Device {
+  string id = 1;                          // Device UUID
+  string name = 2;                        // Human-readable name
+  bytes pubkey = 3;                       // WireGuard public key
+  bool hijack_dns = 5;                    // DNS hijacking enabled
+  google.protobuf.Timestamp created = 6;  // Creation timestamp
+}
+```
+
+### DeviceState Message
+
+```protobuf
+message DeviceState {
+  enum State {
+    LOGGED_IN = 0;
+    LOGGED_OUT = 1;
+    REVOKED = 2;
+  }
+  State state = 1;
+  AccountAndDevice device = 2;  // Only present if LOGGED_IN
+}
+```
+
+### DeviceRemoval Message
+
+```protobuf
+message DeviceRemoval {
+  string account_number = 1;  // Account to remove from
+  string device_id = 2;       // Device ID to remove
+}
+```

@@ -1,0 +1,447 @@
+---
+title: 'Frontend Architectures'
+description: 'Desktop, mobile, and CLI frontend implementations and daemon communication'
+---
+
+# Frontend Architectures
+
+Mullvad VPN provides multiple frontend applications across different platforms, all communicating with the same core daemon. Each platform has unique requirements and communication patterns.
+
+## Communication Mechanisms
+
+### Desktop: gRPC over Unix Domain Socket
+
+**Platforms**: Linux, macOS, Windows (named pipe)
+
+The desktop Electron app and CLI communicate with the daemon via gRPC defined in `mullvad-management-interface/proto/management_interface.proto`.
+
+```
+┌──────────────────────┐
+│   Electron/CLI App   │
+│                      │
+│  ┌────────────────┐  │
+│  │ gRPC Client    │  │
+│  │ (Rust/Node.js) │  │
+│  └────────┬───────┘  │
+└───────────┼──────────┘
+            │ IPC
+            │ Unix Socket: /var/run/mullvad-vpn
+            │ Windows Pipe: \\.\pipe\mullvad-rpc
+            ▼
+┌──────────────────────┐
+│   Mullvad Daemon     │
+│  ┌────────────────┐  │
+│  │ Management     │  │
+│  │ Interface      │  │
+│  │ Server (gRPC)  │  │
+│  └────────────────┘  │
+└──────────────────────┘
+```
+
+**Key features:**
+- Bidirectional streaming for event subscriptions
+- Multiple concurrent clients supported
+- Connection-oriented (clients detect daemon restarts)
+- Automatic reconnection handling in clients
+
+### Android: JNI (Java Native Interface)
+
+**Platform**: Android
+
+On Android, the daemon runs in the same process as the VpnService, with the Kotlin/Java UI layer calling into Rust via JNI.
+
+```
+┌────────────────────────────────────┐
+│         Android App Process        │
+│                                    │
+│  ┌──────────────────────────────┐  │
+│  │     UI Layer (Kotlin)        │  │
+│  │   Activity, ViewModels, etc. │  │
+│  └──────────────┬───────────────┘  │
+│                 │                  │
+│                 │ Kotlin → Rust    │
+│                 ▼                  │
+│  ┌──────────────────────────────┐  │
+│  │   VpnService (Kotlin)        │  │
+│  │   Android VPN Service        │  │
+│  └──────────────┬───────────────┘  │
+│                 │                  │
+│                 │ JNI Boundary     │
+│  ===============╪==================│
+│                 ▼                  │
+│  ┌──────────────────────────────┐  │
+│  │   mullvad-jni (Rust)         │  │
+│  │   JNI wrapper functions      │  │
+│  └──────────────┬───────────────┘  │
+│                 │                  │
+│                 ▼                  │
+│  ┌──────────────────────────────┐  │
+│  │   Mullvad Daemon (Rust)      │  │
+│  │   Core daemon actors         │  │
+│  └──────────────────────────────┘  │
+└────────────────────────────────────┘
+```
+
+**Communication pattern:**
+- Synchronous JNI calls from Java to Rust for commands
+- Callbacks from Rust to Java for events (via JNI)
+- Daemon initialized in VpnService.onCreate()
+- Tunnel file descriptor passed from Android VpnService to Rust
+
+**Example JNI interface:**
+
+```rust
+#[no_mangle]
+pub extern "system" fn Java_..._MullvadDaemon_connect(
+    env: JNIEnv,
+    _class: JClass,
+) {
+    let daemon = DAEMON_INSTANCE.lock();
+    daemon.send_command(DaemonCommand::Connect);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_..._MullvadDaemon_getState(
+    env: JNIEnv,
+    _class: JClass,
+) -> JObject {
+    let daemon = DAEMON_INSTANCE.lock();
+    let state = daemon.get_state();
+    // Convert Rust state to Java object
+    state_to_jobject(env, state)
+}
+```
+
+### iOS: Custom Integration with WireGuard-Kit
+
+**Platform**: iOS
+
+iOS uses a different architecture where the tunnel is managed by Apple's WireGuard-kit, with Mullvad logic providing account management and relay selection.
+
+```
+┌────────────────────────────────────────┐
+│          iOS App                       │
+│                                        │
+│  ┌──────────────────────────────────┐  │
+│  │    UI Layer (Swift/SwiftUI)      │  │
+│  └──────────────┬───────────────────┘  │
+│                 │                      │
+│                 ▼                      │
+│  ┌──────────────────────────────────┐  │
+│  │   PacketTunnelProvider (Swift)   │  │
+│  │   Network Extension              │  │
+│  │                                  │  │
+│  │   ┌──────────────────────────┐   │  │
+│  │   │  WireGuard-Kit (Swift)   │   │  │
+│  │   │  Tunnel management       │   │  │
+│  │   └──────────────────────────┘   │  │
+│  │                                  │  │
+│  │   ┌──────────────────────────┐   │  │
+│  │   │  Mullvad Logic (Rust)    │   │  │
+│  │   │  - Account management    │   │  │
+│  │   │  - Relay selection       │   │  │
+│  │   │  - Settings              │   │  │
+│  │   └──────────────────────────┘   │  │
+│  └──────────────────────────────────┘  │
+└────────────────────────────────────────┘
+```
+
+**Key differences from other platforms:**
+- No full daemon running; WireGuard-kit handles tunnel
+- Mullvad Rust code provides relay selection and account logic
+- Network extension runs in separate process from main app
+- Uses iOS NEPacketTunnelProvider API
+- Offline detection via NWPathMonitor
+
+## Frontend-Specific Architectures
+
+### Desktop Electron App
+
+**Location**: `desktop/packages/mullvad-vpn/`
+
+**Architecture**:
+
+```
+┌─────────────────────────────────────────────┐
+│            Electron App                     │
+│                                             │
+│  ┌───────────────────────────────────────┐  │
+│  │      Renderer Process (React)         │  │
+│  │  - UI Components                      │  │
+│  │  - State management (Redux)           │  │
+│  │  - View logic                         │  │
+│  └──────────────┬────────────────────────┘  │
+│                 │ IPC                       │
+│                 ▼                           │
+│  ┌───────────────────────────────────────┐  │
+│  │         Main Process (Node.js)        │  │
+│  │  - Window management                  │  │
+│  │  - System tray                        │  │
+│  │  - Auto-updater                       │  │
+│  │  - Daemon client                      │  │
+│  │  ┌─────────────────────────────────┐  │  │
+│  │  │  gRPC Client (Node bindings)    │  │  │
+│  │  └──────────────┬──────────────────┘  │  │
+│  └─────────────────┼─────────────────────┘  │
+└────────────────────┼─────────────────────────┘
+                     │ Unix Socket/Named Pipe
+                     ▼
+          ┌────────────────────┐
+          │  Mullvad Daemon    │
+          └────────────────────┘
+```
+
+**Key features:**
+- React for UI rendering
+- Redux for state management
+- Electron IPC between renderer and main process
+- Main process maintains persistent gRPC connection to daemon
+- Automatic reconnection on daemon restart
+- System tray integration for quick access
+- Auto-update using Mullvad's update system
+
+**State synchronization:**
+1. Main process subscribes to daemon event stream
+2. Events forwarded to renderer via Electron IPC
+3. Redux store updated with new state
+4. React components re-render
+
+### Android App
+
+**Location**: `android/`
+
+**Architecture**:
+
+```
+┌──────────────────────────────────────────────┐
+│           Android Application                │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │        UI Layer                        │  │
+│  │  - Activities/Fragments (Kotlin)       │  │
+│  │  - Compose UI                          │  │
+│  │  - ViewModels                          │  │
+│  └───────────────┬────────────────────────┘  │
+│                  │                           │
+│                  ▼                           │
+│  ┌────────────────────────────────────────┐  │
+│  │      Service Layer (Kotlin)            │  │
+│  │  - MullvadVpnService (VpnService)      │  │
+│  │  - ServiceConnection                   │  │
+│  │  - Binders                             │  │
+│  └───────────────┬────────────────────────┘  │
+│                  │ JNI                       │
+│  ════════════════╪═══════════════════════════│
+│                  ▼                           │
+│  ┌────────────────────────────────────────┐  │
+│  │     mullvad-jni (Rust)                 │  │
+│  │  - JNI wrapper functions               │  │
+│  │  - Type conversions Java ↔ Rust        │  │
+│  └───────────────┬────────────────────────┘  │
+│                  │                           │
+│                  ▼                           │
+│  ┌────────────────────────────────────────┐  │
+│  │     Mullvad Daemon (Rust)              │  │
+│  │  - In-process daemon                   │  │
+│  │  - Tunnel management                   │  │
+│  │  - API communication                   │  │
+│  └────────────────────────────────────────┘  │
+└──────────────────────────────────────────────┘
+```
+
+**Android-specific considerations:**
+- VpnService.Builder API for creating VPN tunnel
+- Always-on VPN support
+- Split tunneling using Android app UIDs
+- Per-app VPN configuration
+- ConnectivityManager for offline detection
+- Background service lifecycle management
+- Notification requirement for foreground service
+
+**Tunnel file descriptor flow:**
+1. Android VpnService.Builder creates tunnel interface
+2. Tunnel FD passed to Rust via JNI
+3. Rust daemon uses FD for WireGuard tunnel
+4. Traffic routed through VPN by Android system
+
+### iOS App
+
+**Location**: `ios/`
+
+**Architecture**:
+
+```
+┌──────────────────────────────────────────────┐
+│              iOS Application                 │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │         Main App (Swift)               │  │
+│  │  - SwiftUI Views                       │  │
+│  │  - Account management UI               │  │
+│  │  - Settings UI                         │  │
+│  │  - Shared state with extension         │  │
+│  └────────────────────────────────────────┘  │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │   Network Extension (Swift)            │  │
+│  │                                        │  │
+│  │  PacketTunnelProvider                  │  │
+│  │   │                                    │  │
+│  │   ├─ WireGuard-Kit                     │  │
+│  │   │  └─ Tunnel management (Go/Swift)   │  │
+│  │   │                                    │  │
+│  │   └─ Mullvad Integration (Rust)        │  │
+│  │      └─ Relay selector                 │  │
+│  │      └─ Account/device logic           │  │
+│  └────────────────────────────────────────┘  │
+└──────────────────────────────────────────────┘
+```
+
+**iOS-specific architecture:**
+- Separate process for network extension
+- App Groups for shared data between app and extension
+- WireGuard-kit provides tunnel implementation
+- Mullvad Rust code compiled as static library
+- NWPathMonitor for network reachability
+- Keychain for secure credential storage
+
+**Communication between app and extension:**
+- Shared app group container for settings
+- File-based communication for configuration
+- XPC for limited IPC
+
+### CLI (Command-Line Interface)
+
+**Location**: `mullvad-cli/`
+
+**Architecture**:
+
+```
+┌──────────────────────┐
+│   mullvad CLI        │
+│                      │
+│  ┌────────────────┐  │
+│  │ Argument       │  │
+│  │ Parser (clap)  │  │
+│  └────┬───────────┘  │
+│       │              │
+│       ▼              │
+│  ┌────────────────┐  │
+│  │ Command        │  │
+│  │ Handlers       │  │
+│  └────┬───────────┘  │
+│       │              │
+│       ▼              │
+│  ┌────────────────┐  │
+│  │ gRPC Client    │  │
+│  └────┬───────────┘  │
+└───────┼──────────────┘
+        │ Unix Socket
+        ▼
+┌──────────────────┐
+│ Mullvad Daemon   │
+└──────────────────┘
+```
+
+**Features:**
+- Complete feature parity with GUI
+- Scriptable interface
+- JSON output mode for programmatic use
+- Same gRPC interface as desktop app
+- Single command execution (not interactive)
+
+**Example commands:**
+```bash
+mullvad connect
+mullvad status
+mullvad relay set location se got
+mullvad account login 1234567890123456
+mullvad tunnel wireguard key rotate
+```
+
+## Event Subscription Pattern
+
+All frontends follow a similar pattern for receiving state updates:
+
+### Desktop/CLI (gRPC)
+
+```rust
+// Subscribe to daemon events
+let mut event_stream = client.events_listen(()).await?.into_inner();
+
+// Process events as they arrive
+while let Some(event) = event_stream.next().await {
+    match event?.event {
+        Some(daemon_event::Event::TunnelState(state)) => {
+            update_ui_state(state);
+        }
+        Some(daemon_event::Event::Settings(settings)) => {
+            update_settings(settings);
+        }
+        Some(daemon_event::Event::RelayList(_)) => {
+            reload_relay_list();
+        }
+        // ... other event types
+    }
+}
+```
+
+### Android (JNI Callbacks)
+
+```kotlin
+// Kotlin side registers callback
+interface DaemonStateListener {
+    fun onTunnelStateChange(state: TunnelState)
+    fun onSettingsChange(settings: Settings)
+}
+
+MullvadDaemon.registerListener(listener)
+```
+
+```rust
+// Rust side invokes callback via JNI
+fn notify_tunnel_state_change(state: TunnelState) {
+    let env = get_jni_env();
+    let listener = get_registered_listener();
+    
+    env.call_method(
+        listener,
+        "onTunnelStateChange",
+        state_to_jobject(state)
+    );
+}
+```
+
+## Platform-Specific Features
+
+### Desktop
+- System tray integration
+- Launch at startup
+- Auto-updater
+- Local network sharing settings
+- Split tunneling (Linux, Windows, macOS)
+
+### Android
+- Always-on VPN
+- Per-app VPN
+- Tile for quick connect
+- Work profile support
+- Split tunneling by app
+
+### iOS
+- On-demand VPN rules
+- VPN configuration profile
+- Siri shortcuts
+- Widget support
+
+### CLI
+- Scriptable automation
+- JSON output format
+- Batch operations
+- Server administration
+
+## Related Documentation
+
+- [Daemon Architecture](/architecture/daemon) - Daemon internals and actor system
+- [Tunnel State Machine](/architecture/tunnel-state-machine) - State management
+- [Architecture Overview](/architecture/overview) - Overall system design

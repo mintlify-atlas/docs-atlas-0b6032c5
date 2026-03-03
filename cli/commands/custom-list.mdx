@@ -1,0 +1,469 @@
+---
+title: "mullvad custom-list"
+description: "Create and manage custom relay lists"
+---
+
+## Overview
+
+The `mullvad custom-list` command creates and manages custom lists of relay locations that can be used for relay selection.
+
+## Syntax
+
+```bash
+mullvad custom-list <SUBCOMMAND>
+```
+
+## Subcommands
+
+### new
+
+Create a new custom list:
+
+```bash
+mullvad custom-list new <NAME>
+```
+
+**Arguments:**
+- `<NAME>` - Name for the custom list (max 30 characters)
+
+### list
+
+Show all custom lists or a specific list:
+
+```bash
+mullvad custom-list list [NAME]
+```
+
+**Arguments:**
+- `[NAME]` - Optional name of specific list to display
+
+### edit
+
+Modify a custom list:
+
+```bash
+mullvad custom-list edit <SUBCOMMAND>
+```
+
+### delete
+
+Delete a custom list:
+
+```bash
+mullvad custom-list delete <NAME>
+```
+
+**Arguments:**
+- `<NAME>` - Name of the list to delete
+
+## Edit Subcommands
+
+### add
+
+Add a location to a custom list:
+
+```bash
+mullvad custom-list edit add <NAME> <COUNTRY> [CITY] [HOSTNAME]
+```
+
+**Arguments:**
+- `<NAME>` - Name of the custom list
+- `<COUNTRY>` - Country code (e.g., `se`, `us`)
+- `[CITY]` - Optional city code (e.g., `got`, `nyc`)
+- `[HOSTNAME]` - Optional specific relay hostname
+
+### remove
+
+Remove a location from a custom list:
+
+```bash
+mullvad custom-list edit remove <NAME> <COUNTRY> [CITY] [HOSTNAME]
+```
+
+Same argument format as `add`.
+
+### rename
+
+Rename a custom list:
+
+```bash
+mullvad custom-list edit rename <NAME> <NEW_NAME>
+```
+
+**Arguments:**
+- `<NAME>` - Current name of the list
+- `<NEW_NAME>` - New name for the list (max 30 characters)
+
+## Examples
+
+### Create Custom List
+
+```bash
+mullvad custom-list new "Nordic Countries"
+```
+
+Create empty list that you can populate with locations.
+
+### List All Custom Lists
+
+```bash
+mullvad custom-list list
+```
+
+Output:
+```
+Nordic Countries
+        Sweden (se)
+        Norway (no)
+        Denmark (dk)
+
+US West Coast
+        Los Angeles, United States (lax, us)
+        San Francisco, United States (sjc, us)
+```
+
+### Show Specific List
+
+```bash
+mullvad custom-list list "Nordic Countries"
+```
+
+Output:
+```
+        Sweden (se)
+        Norway (no)
+        Denmark (dk)
+```
+
+### Add Locations to List
+
+Add entire country:
+
+```bash
+mullvad custom-list edit add "Nordic Countries" se
+```
+
+Output:
+```
+Location added to custom-list
+```
+
+Add specific city:
+
+```bash
+mullvad custom-list edit add "US West Coast" us lax
+```
+
+Add specific relay:
+
+```bash
+mullvad custom-list edit add "Favorites" se got se-got-wg-004
+```
+
+### Remove Locations
+
+Remove country:
+
+```bash
+mullvad custom-list edit remove "Nordic Countries" dk
+```
+
+Output:
+```
+Location removed from custom-list
+```
+
+Remove city:
+
+```bash
+mullvad custom-list edit remove "US West Coast" us lax
+```
+
+Remove specific relay:
+
+```bash
+mullvad custom-list edit remove "Favorites" se got se-got-wg-004
+```
+
+### Rename Custom List
+
+```bash
+mullvad custom-list edit rename "Nordic Countries" "Scandinavia"
+```
+
+### Delete Custom List
+
+```bash
+mullvad custom-list delete "US West Coast"
+```
+
+### Use Custom List for Relay Selection
+
+```bash
+mullvad relay set custom-list "Nordic Countries"
+```
+
+Now connections will only use relays from the specified custom list.
+
+## Location Hierarchy
+
+Locations in custom lists follow a hierarchy:
+
+### Country Level
+
+Add entire country:
+
+```bash
+mullvad custom-list edit add "My List" se
+```
+
+Includes all cities and relays in Sweden.
+
+### City Level
+
+Add specific city:
+
+```bash
+mullvad custom-list edit add "My List" se got
+```
+
+Includes all relays in Gothenburg, Sweden.
+
+### Hostname Level
+
+Add specific relay:
+
+```bash
+mullvad custom-list edit add "My List" se got se-got-wg-004
+```
+
+Includes only this specific relay.
+
+## Common Custom List Examples
+
+### Regional Lists
+
+**Europe:**
+```bash
+mullvad custom-list new "Europe"
+mullvad custom-list edit add "Europe" se
+mullvad custom-list edit add "Europe" de
+mullvad custom-list edit add "Europe" nl
+mullvad custom-list edit add "Europe" ch
+```
+
+**Asia:**
+```bash
+mullvad custom-list new "Asia"
+mullvad custom-list edit add "Asia" jp
+mullvad custom-list edit add "Asia" sg
+mullvad custom-list edit add "Asia" hk
+```
+
+### Low-Latency List
+
+Create list of nearby relays:
+
+```bash
+mullvad custom-list new "Low Latency"
+mullvad custom-list edit add "Low Latency" us nyc
+mullvad custom-list edit add "Low Latency" us bos
+mullvad custom-list edit add "Low Latency" ca tor
+```
+
+### Favorite Relays
+
+List of specific relays:
+
+```bash
+mullvad custom-list new "Favorites"
+mullvad custom-list edit add "Favorites" se-got-wg-004
+mullvad custom-list edit add "Favorites" us-nyc-wg-301
+mullvad custom-list edit add "Favorites" jp-tyo-wg-001
+```
+
+### Owned Servers Only
+
+Combine custom list with ownership filter:
+
+```bash
+mullvad custom-list new "Trusted"
+# Add countries with owned servers
+mullvad custom-list edit add "Trusted" se
+
+# Use list with ownership constraint
+mullvad relay set custom-list "Trusted"
+mullvad relay set ownership owned
+```
+
+## Advanced Usage
+
+### Multihop with Custom Lists
+
+Use custom lists for entry and exit:
+
+```bash
+# Create lists
+mullvad custom-list new "Entry"
+mullvad custom-list new "Exit"
+
+# Configure multihop
+mullvad relay set multihop on
+mullvad relay set entry custom-list "Entry"
+mullvad relay set custom-list "Exit"
+```
+
+### Dynamic List Updates
+
+Update list while connected:
+
+```bash
+# Already using custom list
+mullvad relay set custom-list "Europe"
+mullvad connect
+
+# Add/remove locations
+mullvad custom-list edit add "Europe" fr
+mullvad custom-list edit remove "Europe" it
+
+# Reconnect to use updated list
+mullvad reconnect
+```
+
+## List Management
+
+### View All Locations in List
+
+```bash
+mullvad custom-list list "My List"
+```
+
+Displays:
+- Full country names
+- City names
+- Country/city codes
+- Hostnames
+
+### Duplicate Detection
+
+Attempting to add existing location:
+
+```bash
+mullvad custom-list edit add "My List" se
+mullvad custom-list edit add "My List" se
+```
+
+Output:
+```
+Provided location is already present in custom-list
+```
+
+### Removing Non-Existent Location
+
+```bash
+mullvad custom-list edit remove "My List" fr
+```
+
+Output:
+```
+Provided location was not present in custom-list
+```
+
+## List Name Constraints
+
+### Maximum Length
+
+List names are limited to 30 characters (UTF-8 codepoints):
+
+```bash
+# Valid
+mullvad custom-list new "Europe and Asia"
+
+# Too long (error)
+mullvad custom-list new "This is a very long name that exceeds the maximum allowed length"
+```
+
+### Name Trimming
+
+Whitespace is automatically trimmed:
+
+```bash
+mullvad custom-list new "  My List  "
+# Creates list named "My List"
+```
+
+### Existing Names
+
+Referencing lists by name is case-sensitive:
+
+```bash
+mullvad custom-list new "Europe"
+mullvad custom-list edit add "europe" se  # Error: List not found
+mullvad custom-list edit add "Europe" se  # Success
+```
+
+## Related Commands
+
+- [relay set custom-list](/cli/commands/relay) - Use custom list for relay selection
+- [relay list](/cli/commands/relay) - View all available relays
+- [relay get](/cli/commands/relay) - Show current relay constraints
+- [connect](/cli/commands/connect) - Connect using custom list
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Command executed successfully |
+| 1 | List not found, invalid location, or operation failed |
+
+## Notes
+
+- Custom lists are persistent across restarts
+- Lists can include inactive relays (useful for planning)
+- List names are limited to 30 characters
+- Locations are stored as geographic constraints
+- Lists can mix countries, cities, and specific hostnames
+- Empty lists are allowed
+- Lists are validated against relay cache when used
+
+## Troubleshooting
+
+### Invalid Location
+
+If you get "Invalid location argument":
+
+1. Check available locations:
+   ```bash
+   mullvad relay list
+   ```
+
+2. Verify country/city codes:
+   - Sweden: `se`
+   - Gothenburg: `got`
+   - Relay: `se-got-wg-004`
+
+3. Use correct hierarchy:
+   ```bash
+   # Correct
+   mullvad custom-list edit add "My List" se got
+   
+   # Incorrect (missing country)
+   mullvad custom-list edit add "My List" got
+   ```
+
+### List Not Found
+
+If you get "List not found":
+
+1. Check existing lists:
+   ```bash
+   mullvad custom-list list
+   ```
+
+2. Verify exact name (case-sensitive)
+
+3. List may have been deleted
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/custom_list.rs`

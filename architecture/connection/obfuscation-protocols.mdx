@@ -1,0 +1,1107 @@
+---
+title: Obfuscation Protocol Implementations
+description: Deep-packet-inspection circumvention using UDP2TCP, Shadowsocks, QUIC, and Lightweight WireGuard Obfuscation
+---
+
+Mullvad VPN implements multiple obfuscation protocols to bypass deep packet inspection (DPI) and network restrictions that may block or throttle WireGuard traffic. These protocols wrap WireGuard UDP packets to make them appear as other types of traffic.
+
+## Overview
+
+Obfuscation protocols are transparent local proxies that:
+
+1. **Intercept** WireGuard traffic destined for the VPN server
+2. **Transform** the packets to hide WireGuard's signature
+3. **Forward** transformed packets to the obfuscation server
+4. **Receive** responses from the server and unwrap them
+5. **Deliver** unwrapped packets to the WireGuard tunnel
+
+### Supported Protocols
+
+| Protocol | Transport | Use Case | Overhead |
+|----------|-----------|----------|----------|
+| **UDP-over-TCP** | TCP | Networks blocking UDP | ~54 bytes |
+| **Shadowsocks** | UDP | Censorship circumvention | ~59 bytes |
+| **QUIC** | QUIC/UDP | Modern HTTP/3 mimicry | ~0 bytes* |
+| **LWO** | UDP | Lightweight header obfuscation | 0 bytes |
+
+*QUIC overhead is handled at the QUIC layer, not counted in WireGuard MTU
+
+### Code References
+
+- Integration layer: `talpid-wireguard/src/obfuscation.rs`
+- Protocol implementations: `tunnel-obfuscation/src/`
+  - UDP2TCP: `tunnel-obfuscation/src/udp2tcp.rs`
+  - Shadowsocks: `tunnel-obfuscation/src/shadowsocks.rs`
+  - QUIC: `tunnel-obfuscation/src/quic.rs`
+  - LWO: `tunnel-obfuscation/src/lwo.rs`
+  - Multiplexer: `tunnel-obfuscation/src/multiplexer.rs`
+
+## Architecture
+
+### Obfuscator Trait
+
+All obfuscation protocols implement a common interface (`tunnel-obfuscation/src/lib.rs:54-70`):
+
+```rust
+#[async_trait]
+pub trait Obfuscator: Send {
+    /// Run the obfuscator (blocking)
+    async fn run(self: Box<Self>) -> Result<()>;
+    
+    /// Local endpoint to connect WireGuard to
+    fn endpoint(&self) -> SocketAddr;
+    
+    /// Remote socket file descriptor (Android bypass)
+    #[cfg(target_os = "android")]
+    fn remote_socket_fd(&self) -> std::os::unix::io::RawFd;
+    
+    /// Packet overhead for MTU calculation
+    fn packet_overhead(&self) -> u16;
+}
+```
+
+### Settings Enum
+
+Obfuscation configuration is represented as (`lib.rs:72-79`):
+
+```rust
+pub enum Settings {
+    Udp2Tcp(udp2tcp::Settings),
+    Shadowsocks(shadowsocks::Settings),
+    Quic(quic::Settings),
+    Lwo(lwo::Settings),
+    Multiplexer(multiplexer::Settings),
+}
+
+pub async fn create_obfuscator(settings: &Settings) -> Result<Box<dyn Obfuscator>>
+```
+
+### Integration with WireGuard
+
+Obfuscation is applied before tunnel creation (`obfuscation.rs:30-81`):
+
+```rust
+pub async fn apply_obfuscation_config(
+    config: &mut Config,
+    obfuscation_mtu: u16,
+    close_msg_sender: sync_mpsc::Sender<CloseMsg>,
+) -> Result<Option<ObfuscatorHandle>> {
+    let Some(ref obfuscator_config) = config.obfuscator_config else {
+        return Ok(None);
+    };
+    
+    // 1. Create obfuscation settings from config
+    let settings = settings_from_config(config, obfuscator_config, obfuscation_mtu);
+    
+    // 2. Create obfuscator instance
+    let obfuscator = create_obfuscator(&settings).await?;
+    let packet_overhead = obfuscator.packet_overhead();
+    
+    // 3. Bypass VPN on Android
+    #[cfg(target_os = "android")]
+    bypass_vpn(tun_provider, obfuscator.remote_socket_fd()).await;
+    
+    // 4. Patch WireGuard endpoint to localhost
+    patch_endpoint(config, obfuscator.endpoint());
+    
+    // 5. Spawn obfuscation task
+    let obfuscation_task = tokio::spawn(async move {
+        match obfuscator.run().await {
+            Ok(_) => { /* Normal shutdown */ },
+            Err(error) => {
+                let _ = close_msg_sender.send(
+                    CloseMsg::ObfuscatorFailed(Error::ObfuscationError(error))
+                );
+            }
+        }
+    });
+    
+    Ok(Some(ObfuscatorHandle { obfuscation_task, packet_overhead }))
+}
+```
+
+**Endpoint Patching** (`obfuscation.rs:84-87`):
+
+The WireGuard peer endpoint is changed from the remote server to the local obfuscator:
+
+```rust
+fn patch_endpoint(config: &mut Config, endpoint: SocketAddr) {
+    log::trace!("Patching first WireGuard peer to become {endpoint}");
+    config.entry_peer.endpoint = endpoint;  // e.g., 127.0.0.1:51820
+}
+```
+
+### Traffic Flow
+
+```
+WireGuard → 127.0.0.1:51820 (local obfuscator) → Obfuscation → Remote Server:443
+                                    ↓ Transform UDP packets
+                                    ↓ 
+Remote Server:443 → Obfuscation → 127.0.0.1:51820 (local obfuscator) → WireGuard
+                                    ↓ Restore UDP packets
+```
+
+## UDP-over-TCP (UDP2TCP)
+
+### Purpose
+
+Encapsulates WireGuard UDP packets inside TCP to traverse networks that block or deprioritize UDP traffic.
+
+### Implementation
+
+Uses the `udp-over-tcp` library (`udp2tcp.rs:1-101`):
+
+```rust
+use udp_over_tcp::{TcpOptions, udp2tcp::{Udp2Tcp as Udp2TcpImpl}};
+
+pub struct Settings {
+    pub peer: SocketAddr,           // Remote obfuscation server
+    #[cfg(target_os = "linux")]
+    pub fwmark: Option<u32>,
+}
+
+pub struct Udp2Tcp {
+    local_addr: SocketAddr,
+    instance: Udp2TcpImpl,
+}
+
+impl Udp2Tcp {
+    pub async fn new(settings: &Settings) -> Result<Self> {
+        // Bind local UDP socket (what WireGuard connects to)
+        let listen_addr = if settings.peer.is_ipv4() {
+            SocketAddr::new("127.0.0.1".parse().unwrap(), 0)
+        } else {
+            SocketAddr::new("::1".parse().unwrap(), 0)
+        };
+        
+        let instance = Udp2TcpImpl::new(
+            listen_addr,
+            settings.peer,  // Remote TCP endpoint
+            TcpOptions {
+                #[cfg(target_os = "linux")]
+                fwmark: settings.fwmark,
+                nodelay: true,  // Disable Nagle's algorithm
+                ..TcpOptions::default()
+            },
+        ).await?;
+        
+        let local_addr = instance.local_udp_addr()?;
+        Ok(Self { local_addr, instance })
+    }
+}
+
+#[async_trait]
+impl Obfuscator for Udp2Tcp {
+    fn endpoint(&self) -> SocketAddr {
+        self.local_addr  // WireGuard connects here
+    }
+    
+    async fn run(self: Box<Self>) -> crate::Result<()> {
+        self.instance.run().await
+    }
+    
+    fn packet_overhead(&self) -> u16 {
+        let max_tcp_header_len = 60;  // RFC 9293
+        let udp_header_len = 8;       // RFC 768
+        let udp_over_tcp_header_len = size_of::<u16>();  // Length prefix
+        
+        let overhead = max_tcp_header_len - udp_header_len + udp_over_tcp_header_len;
+        u16::try_from(overhead).unwrap()  // 54 bytes
+    }
+}
+```
+
+### Protocol Format
+
+Each UDP packet is prefixed with a 2-byte length field and sent over TCP:
+
+```
++--------+--------+------------------+
+| Length (2 bytes) |   UDP Payload   |
++--------+--------+------------------+
+```
+
+### TCP Options
+
+- **nodelay = true**: Disables Nagle's algorithm for lower latency
+- **fwmark** (Linux): Marks packets for policy routing
+
+### Use Cases
+
+- Corporate networks blocking UDP
+- ISPs with aggressive UDP throttling
+- Networks with broken UDP connectivity
+
+## Shadowsocks
+
+### Purpose
+
+Originally designed to circumvent the Great Firewall of China, Shadowsocks encrypts and authenticates UDP packets using AEAD ciphers.
+
+### Implementation
+
+```rust
+use shadowsocks::{
+    ProxySocket,
+    config::{ServerConfig, ServerType},
+    context::Context,
+    crypto::CipherKind,
+    relay::{Address, udprelay::proxy_socket::UdpSocketType},
+};
+
+const SHADOWSOCKS_CIPHER: CipherKind = CipherKind::AES_256_GCM;
+const SHADOWSOCKS_PASSWORD: &str = "mullvad";
+
+pub struct Settings {
+    pub shadowsocks_endpoint: SocketAddr,  // Remote Shadowsocks server
+    pub wireguard_endpoint: SocketAddr,    // Remote WireGuard server (target)
+    #[cfg(target_os = "linux")]
+    pub fwmark: Option<u32>,
+}
+
+pub struct Shadowsocks {
+    udp_client_addr: SocketAddr,      // Local bind address for WireGuard
+    wireguard_endpoint: SocketAddr,   // Target address in Shadowsocks packets
+    server: tokio::task::JoinHandle<Result<()>>,
+    _shutdown_tx: oneshot::Sender<()>,
+    #[cfg(target_os = "android")]
+    outbound_fd: i32,
+}
+```
+
+### Initialization Sequence
+
+```rust
+impl Shadowsocks {
+    pub async fn new(settings: &Settings) -> crate::Result<Self> {
+        // 1. Create local UDP socket for WireGuard
+        let local_udp_socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let udp_client_addr = local_udp_socket.local_addr()?;
+        
+        // 2. Create remote UDP socket for Shadowsocks server
+        let remote_socket = create_remote_socket(
+            settings.shadowsocks_endpoint.is_ipv4(),
+            #[cfg(target_os = "linux")]
+            settings.fwmark,
+        ).await?;
+        
+        // 3. Start forwarding task
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server = tokio::spawn(run_forwarding(
+            settings.shadowsocks_endpoint,
+            remote_socket,
+            local_udp_socket,
+            settings.wireguard_endpoint,
+            shutdown_rx,
+        ));
+        
+        Ok(Shadowsocks {
+            udp_client_addr,
+            wireguard_endpoint: settings.wireguard_endpoint,
+            server,
+            _shutdown_tx: shutdown_tx,
+        })
+    }
+}
+```
+
+### Forwarding Logic
+
+```rust
+async fn run_forwarding(
+    shadowsocks_endpoint: SocketAddr,
+    remote_socket: UdpSocket,
+    local_udp_socket: UdpSocket,
+    wireguard_endpoint: SocketAddr,
+    shutdown_rx: oneshot::Receiver<()>,
+) -> Result<()> {
+    // Wait for WireGuard to send first packet
+    wait_for_local_udp_client(&local_udp_socket).await?;
+    
+    // Create Shadowsocks proxy socket
+    let shadowsocks = connect_shadowsocks(remote_socket, shadowsocks_endpoint)?;
+    let shadowsocks = Arc::new(shadowsocks);
+    let local_udp = Arc::new(local_udp_socket);
+    
+    let wg_addr = Address::SocketAddress(wireguard_endpoint);
+    
+    // Spawn bidirectional forwarding
+    let mut client = tokio::spawn(handle_outgoing(
+        shadowsocks.clone(),
+        local_udp.clone(),
+        shadowsocks_endpoint,
+        wg_addr.clone(),
+    ));
+    let mut server = tokio::spawn(handle_incoming(
+        shadowsocks,
+        local_udp,
+        shadowsocks_endpoint,
+        wg_addr,
+    ));
+    
+    // Wait for shutdown or task completion
+    tokio::select! {
+        _ = shutdown_rx => log::trace!("Stopping shadowsocks obfuscation"),
+        _ = &mut server => log::trace!("Shadowsocks client closed"),
+        _ = &mut client => log::trace!("Local UDP client closed"),
+    }
+    
+    client.abort();
+    server.abort();
+    Ok(())
+}
+```
+
+**Outgoing** (WireGuard → Shadowsocks):
+
+```rust
+async fn handle_outgoing(
+    ss_write: Arc<ShadowSocket>,
+    local_udp_read: Arc<UdpSocket>,
+    ss_addr: SocketAddr,
+    wg_addr: Address,
+) {
+    let mut rx_buffer = vec![0u8; u16::MAX as usize];
+    loop {
+        let read_n = local_udp_read.recv(&mut rx_buffer).await?;
+        ss_write.send_to(ss_addr, &wg_addr, &rx_buffer[0..read_n]).await?;
+    }
+}
+```
+
+**Incoming** (Shadowsocks → WireGuard):
+
+```rust
+async fn handle_incoming(
+    ss_read: Arc<ShadowSocket>,
+    local_udp_write: Arc<UdpSocket>,
+    ss_addr: SocketAddr,
+    wg_addr: Address,
+) {
+    let mut rx_buffer = vec![0u8; u16::MAX as usize];
+    loop {
+        let (read_n, rx_addr, addr, _ctrl) = ss_read.recv_from(&mut rx_buffer).await?;
+        
+        // Verify source address
+        if rx_addr != ss_addr || addr != wg_addr {
+            continue;  // Ignore unexpected packets
+        }
+        
+        local_udp_write.send(&rx_buffer[0..read_n]).await?;
+    }
+}
+```
+
+### Packet Format
+
+Shadowsocks AEAD UDP packets (`shadowsocks.rs:281-292`):
+
+```
++--------+----------+---------+------+
+|  Salt  | Address  | Payload | Tag  |
++--------+----------+---------+------+
+```
+
+**Overhead Calculation**:
+
+```rust
+fn packet_overhead(&self) -> u16 {
+    debug_assert!(SHADOWSOCKS_CIPHER.is_aead());
+    
+    let overhead = SHADOWSOCKS_CIPHER.salt_len()           // 32 bytes (AES-256-GCM)
+        + Address::from(self.wireguard_endpoint).serialized_len()  // 7 bytes (IPv4) or 19 bytes (IPv6)
+        + SHADOWSOCKS_CIPHER.tag_len();                    // 16 bytes
+    
+    u16::try_from(overhead).unwrap()  // ~55-67 bytes
+}
+```
+
+### Cipher Configuration
+
+- **Algorithm**: AES-256-GCM (AEAD)
+- **Password**: "mullvad" (shared secret)
+- **Salt**: Random 32 bytes per packet
+- **Tag**: 16-byte authentication tag
+
+### Use Cases
+
+- Censorship circumvention in restrictive countries
+- Networks with DPI that blocks WireGuard signatures
+- Additional encryption layer (defense in depth)
+
+## QUIC Obfuscation
+
+### Purpose
+
+Masquerades WireGuard as QUIC/HTTP3 traffic, which is becoming increasingly common and is less likely to be blocked.
+
+### Implementation
+
+Uses the `mullvad-masque-proxy` library for HTTP/3 CONNECT-UDP proxying (`quic.rs:1-221`):
+
+```rust
+use mullvad_masque_proxy::client::{Client, ClientConfig};
+use tokio_util::sync::CancellationToken;
+
+pub struct Settings {
+    quic_endpoint: SocketAddr,         // QUIC server address
+    wireguard_endpoint: SocketAddr,    // Target WireGuard server
+    hostname: String,                  // SNI hostname
+    token: AuthToken,                  // Bearer token
+    #[cfg(target_os = "linux")]
+    fwmark: Option<u32>,
+    mtu: Option<u16>,                  // QUIC path MTU
+}
+
+pub struct Quic {
+    local_endpoint: SocketAddr,
+    config: ClientConfig,
+}
+```
+
+### Configuration Builder
+
+```rust
+impl Settings {
+    pub fn new(
+        quic_server_endpoint: SocketAddr,
+        hostname: String,
+        token: AuthToken,
+        target_endpoint: SocketAddr,
+    ) -> Self {
+        Self {
+            quic_endpoint: quic_server_endpoint,
+            wireguard_endpoint: target_endpoint,
+            hostname,
+            token,
+            mtu: None,
+            fwmark: None,
+        }
+    }
+    
+    pub fn mtu(self, mtu: u16) -> Self {
+        debug_assert!(mtu <= 1500);
+        Self { mtu: Some(mtu), ..self }
+    }
+    
+    fn auth_header(&self) -> String {
+        format!("Bearer {}", self.token.0)
+    }
+}
+```
+
+### Client Initialization
+
+```rust
+impl Quic {
+    pub async fn new(settings: &Settings) -> crate::Result<Self> {
+        // 1. Local UDP socket for WireGuard
+        let (local_socket, local_udp_client_addr) = 
+            Quic::create_local_udp_socket(settings.quic_endpoint.is_ipv4()).await?;
+        
+        // 2. Remote UDP socket for QUIC
+        let quic_socket = create_remote_socket(
+            settings.quic_endpoint.is_ipv4(),
+            #[cfg(target_os = "linux")]
+            settings.fwmark,
+        ).await?;
+        
+        // 3. Build MASQUE proxy config
+        let config = ClientConfig::builder()
+            .client_socket(local_socket)
+            .quinn_socket(quic_socket)
+            .server_addr(settings.quic_endpoint)
+            .server_host(settings.hostname.clone())
+            .target_addr(settings.wireguard_endpoint)
+            .auth_header(Some(settings.auth_header()))
+            .mtu(settings.mtu.unwrap_or(1500))
+            .build();
+        
+        Ok(Quic {
+            local_endpoint: local_udp_client_addr,
+            config,
+        })
+    }
+}
+```
+
+### Forwarding Task
+
+```rust
+#[async_trait]
+impl Obfuscator for Quic {
+    async fn run(self: Box<Self>) -> crate::Result<()> {
+        let token = CancellationToken::new();
+        let child_token = token.child_token();
+        let _drop_guard = token.drop_guard();
+        
+        // Connect to QUIC server
+        let client = Client::connect(self.config).await?;
+        
+        // Run MASQUE proxy
+        tokio::spawn(Quic::run_forwarding(client, child_token))
+            .await
+            .unwrap()
+    }
+    
+    fn packet_overhead(&self) -> u16 {
+        // QUIC overhead handled at QUIC layer, not in WireGuard MTU
+        // Actual overhead: ~95 bytes (IPv6 + UDP + QUIC + stream ID + fragment)
+        0
+    }
+}
+
+async fn run_forwarding(client: Client, cancel_token: CancellationToken) -> Result<()> {
+    let client = client.run();
+    log::trace!("QUIC client is running!");
+    
+    tokio::select! {
+        _ = cancel_token.cancelled() => log::trace!("Stopping QUIC obfuscation"),
+        _ = client.until_closed() => log::trace!("QUIC client closed"),
+    }
+    
+    Ok(())
+}
+```
+
+### Authentication Token
+
+```rust
+pub struct AuthToken(String);
+
+impl AuthToken {
+    pub fn new(token: String) -> Option<Self> {
+        if token.starts_with("Bearer") {
+            return None;  // Don't include "Bearer" prefix
+        }
+        Some(Self(token))
+    }
+}
+
+impl std::str::FromStr for AuthToken {
+    type Err = String;
+    
+    fn from_str(token: &str) -> Result<Self, Self::Err> {
+        Self::new(token.to_owned())
+            .ok_or_else(|| "Token must not start with 'Bearer'".to_string())
+    }
+}
+```
+
+### MASQUE Protocol
+
+Implements IETF MASQUE (Multiplexed Application Substrate over QUIC Encryption):
+
+1. **CONNECT-UDP**: HTTP/3 method to establish UDP proxy
+2. **Datagram Extension**: QUIC datagrams carry UDP packets
+3. **Authentication**: Bearer token in HTTP headers
+
+### Use Cases
+
+- Networks that allow HTTP/3 but block VPNs
+- Mimicking legitimate web traffic
+- Low-latency obfuscation (QUIC's 0-RTT)
+
+## Lightweight WireGuard Obfuscation (LWO)
+
+### Purpose
+
+Minimal-overhead obfuscation that XORs WireGuard packet headers with public keys, breaking DPI signatures without significant performance penalty.
+
+### Implementation
+
+```rust
+use talpid_types::net::wireguard::PublicKey;
+use rand::{RngCore, SeedableRng};
+
+const MAX_UDP_SIZE: usize = u16::MAX as usize;
+const OBFUSCATION_BIT: u8 = 0b10000000;  // MSB of reserved byte
+
+pub struct Settings {
+    pub server_addr: SocketAddr,
+    pub client_public_key: PublicKey,  // Used for receiving
+    pub server_public_key: PublicKey,  // Used for sending
+    #[cfg(target_os = "linux")]
+    pub fwmark: Option<u32>,
+}
+
+pub struct Lwo {
+    client: Client,
+    local_endpoint: SocketAddr,
+}
+
+struct Client {
+    server_addr: SocketAddr,
+    rx_key: PublicKey,  // Deobfuscate with this
+    tx_key: PublicKey,  // Obfuscate with this
+    remote_socket: Arc<UdpSocket>,
+    client_socket: Arc<UdpSocket>,
+}
+```
+
+### Initialization
+
+```rust
+impl Lwo {
+    pub async fn new(settings: &Settings) -> crate::Result<Self> {
+        // Remote socket to server
+        let remote_socket = Arc::new(create_remote_socket(...).await?);
+        
+        // Local socket for WireGuard
+        let client_socket = Arc::new(
+            UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?
+        );
+        let local_endpoint = client_socket.local_addr()?;
+        
+        let client = Client {
+            server_addr: settings.server_addr,
+            rx_key: settings.client_public_key.clone(),
+            tx_key: settings.server_public_key.clone(),
+            remote_socket,
+            client_socket,
+        };
+        
+        Ok(Self { local_endpoint, client })
+    }
+}
+```
+
+### Connection Establishment
+
+```rust
+impl Client {
+    async fn connect(self) -> Result<RunningClient, Error> {
+        // Connect remote socket to server
+        self.remote_socket.connect(self.server_addr).await?;
+        
+        // Wait for WireGuard to send first packet, then connect to it
+        let client_addr = self.client_socket.peek_sender().await?;
+        self.client_socket.connect(client_addr).await?;
+        
+        // Spawn bidirectional forwarding
+        let send_task = tokio::spawn({
+            let rx_socket = self.client_socket.clone();
+            let tx_socket = self.remote_socket.clone();
+            let tx_key = self.tx_key.clone();
+            async move {
+                run_obfuscation(true, tx_key, rx_socket, tx_socket).await;
+            }
+        });
+        
+        let recv_task = tokio::spawn({
+            let rx_socket = self.remote_socket.clone();
+            let tx_socket = self.client_socket.clone();
+            let rx_key = self.rx_key.clone();
+            async move {
+                run_obfuscation(false, rx_key, rx_socket, tx_socket).await;
+            }
+        });
+        
+        Ok(RunningClient { send: send_task, recv: recv_task })
+    }
+}
+```
+
+### Obfuscation Algorithm
+
+**Sending (Obfuscate)**:
+
+```rust
+pub fn obfuscate(rng: &mut impl RngCore, packet: &mut [u8], key: &[u8; 32]) {
+    let Some(header_bytes) = header_mut(packet, 0) else {
+        return;  // Invalid packet
+    };
+    
+    // XOR header with server public key
+    xor_bytes(header_bytes, key);
+    
+    // Set obfuscation bit in reserved byte
+    let rand_byte = (rng.next_u32() % u8::MAX as u32) as u8;
+    header_bytes[1] = rand_byte | OBFUSCATION_BIT;
+}
+
+fn xor_bytes(data: &mut [u8], key: &[u8; 32]) {
+    for (i, byte) in data.iter_mut().enumerate() {
+        *byte ^= key[i % key.len()];
+    }
+}
+```
+
+**Receiving (Deobfuscate)**:
+
+```rust
+pub fn deobfuscate(packet: &mut [u8], key: &[u8; 32]) {
+    let Some(header_bytes) = header_mut(packet, key[0]) else {
+        return;  // Invalid packet
+    };
+    
+    #[cfg(debug_assertions)]
+    if !is_obfuscated(header_bytes[1]) {
+        log::error!("Received non-obfuscated packet from relay");
+        return;
+    }
+    
+    // XOR header with client public key
+    xor_bytes(header_bytes, key);
+    
+    // Clear obfuscation bit
+    header_bytes[1] = 0;
+}
+
+const fn is_obfuscated(reserved_byte: u8) -> bool {
+    reserved_byte & OBFUSCATION_BIT != 0
+}
+```
+
+### Header Extraction
+
+```rust
+fn header_mut(packet: &mut [u8], key_byte: u8) -> Option<&mut [u8]> {
+    let &header_type = packet.first()?;
+    match header_type ^ key_byte {
+        HANDSHAKE_INIT => packet.get_mut(..HANDSHAKE_INIT_SZ),   // 148 bytes
+        HANDSHAKE_RESP => packet.get_mut(..HANDSHAKE_RESP_SZ),   // 92 bytes
+        COOKIE_REPLY   => packet.get_mut(..COOKIE_REPLY_SZ),     // 64 bytes
+        DATA           => packet.get_mut(..DATA_OVERHEAD_SZ),     // 32 bytes
+        _              => None,
+    }
+}
+```
+
+### WireGuard Message Types
+
+```rust
+type MessageType = u8;
+const HANDSHAKE_INIT: MessageType = 1;
+const HANDSHAKE_RESP: MessageType = 2;
+const COOKIE_REPLY:   MessageType = 3;
+const DATA:           MessageType = 4;
+
+const HANDSHAKE_INIT_SZ: usize = 148;
+const HANDSHAKE_RESP_SZ: usize = 92;
+const COOKIE_REPLY_SZ:   usize = 64;
+const DATA_OVERHEAD_SZ:  usize = 32;
+```
+
+### Forwarding Loop
+
+```rust
+async fn run_obfuscation(
+    sending: bool,
+    key: PublicKey,
+    read_socket: Arc<UdpSocket>,
+    write_socket: Arc<UdpSocket>,
+) {
+    if sending {
+        let mut rng = new_rng();
+        run_obfuscation_inner(
+            move |buf| obfuscate(&mut rng, buf, key.as_bytes()),
+            read_socket,
+            write_socket,
+        ).await
+    } else {
+        run_obfuscation_inner(
+            move |buf| deobfuscate(buf, key.as_bytes()),
+            read_socket,
+            write_socket,
+        ).await
+    }
+}
+
+async fn run_obfuscation_inner(
+    mut action: impl FnMut(&mut [u8]),
+    read_socket: Arc<UdpSocket>,
+    write_socket: Arc<UdpSocket>,
+) {
+    let mut buf = vec![0u8; MAX_UDP_SIZE];
+    
+    loop {
+        let read_n = match read_socket.recv(&mut buf).await {
+            Ok(read_n) => read_n,
+            Err(err) => {
+                log::debug!("read_socket.recv failed: {err}");
+                return;
+            }
+        };
+        
+        // Transform packet
+        action(&mut buf[..read_n]);
+        
+        if let Err(err) = write_socket.send(&buf[..read_n]).await {
+            log::debug!("write_socket.send failed: {err}");
+            return;
+        }
+    }
+}
+```
+
+### Security Properties
+
+- **No encryption**: Only obfuscates headers, payload remains WireGuard-encrypted
+- **Zero overhead**: No additional bytes added to packets
+- **DPI evasion**: Breaks WireGuard packet signatures
+- **Key-based**: Uses WireGuard public keys for XOR (no shared secret needed)
+
+### Use Cases
+
+- Networks with basic DPI that only checks packet signatures
+- When minimal overhead is critical
+- Environments where performance is more important than deep obfuscation
+
+## Multiplexer
+
+The multiplexer allows trying multiple obfuscation protocols simultaneously, using the first one that succeeds.
+
+### Configuration
+
+```rust
+pub struct Settings {
+    pub transports: Vec<Transport>,
+    #[cfg(target_os = "linux")]
+    pub fwmark: Option<u32>,
+}
+
+pub enum Transport {
+    Direct(SocketAddr),              // No obfuscation
+    Obfuscated(ObfuscationSettings), // Any obfuscation protocol
+}
+```
+
+### Use Cases
+
+- Fallback to direct connection if obfuscation fails
+- Trying multiple obfuscation servers
+- Adaptive protocol selection based on network conditions
+
+## MTU Considerations
+
+### Overhead Adjustment
+
+When obfuscation is enabled, the tunnel MTU is reduced (`talpid-wireguard/src/lib.rs:189-196`):
+
+```rust
+if params.options.mtu.is_none() && let Some(obfuscator) = obfuscator.as_ref() {
+    config.mtu = clamp_tunnel_mtu(
+        params,
+        config.mtu.saturating_sub(obfuscator.packet_overhead()),
+    );
+}
+```
+
+### Obfuscation MTU
+
+The obfuscation layer uses the physical link MTU:
+
+```rust
+let route_mtu = get_route_mtu(params, &route_manager).await;
+let obfuscation_mtu = route_mtu;
+
+let obfuscator = obfuscation::apply_obfuscation_config(
+    &mut config,
+    obfuscation_mtu,
+    close_obfs_sender.clone(),
+).await?;
+```
+
+### Protocol-Specific MTU
+
+- **UDP2TCP**: Requires ~54 bytes overhead for TCP header
+- **Shadowsocks**: ~55-67 bytes for salt + address + tag
+- **QUIC**: MTU handled internally by QUIC protocol
+- **LWO**: 0 bytes overhead
+
+## Android-Specific Handling
+
+### VPN Bypass
+
+On Android, obfuscation sockets must be excluded from the VPN (`obfuscation.rs:184-197`):
+
+```rust
+#[cfg(target_os = "android")]
+async fn bypass_vpn(
+    tun_provider: Arc<Mutex<TunProvider>>,
+    remote_socket_fd: std::os::unix::io::RawFd,
+) {
+    log::debug!("Excluding remote socket fd from the tunnel");
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Err(error) = tun_provider.lock().unwrap().bypass(&remote_socket_fd) {
+            log::error!("Failed to exclude remote socket fd: {error}");
+        }
+    }).await;
+}
+```
+
+This calls Android's `VpnService.protect()` to prevent routing loops.
+
+## Error Handling
+
+### Obfuscation Errors
+
+```rust
+pub enum Error {
+    CreateUdp2TcpObfuscator(udp2tcp::Error),
+    RunUdp2TcpObfuscator(udp2tcp::Error),
+    CreateShadowsocksObfuscator(shadowsocks::Error),
+    RunShadowsocksObfuscator(shadowsocks::Error),
+    CreateQuicObfuscator(quic::Error),
+    RunQuicObfuscator(quic::Error),
+    CreateLwoObfuscator(lwo::Error),
+    RunLwoObfuscator(lwo::Error),
+    BindRemoteUdp(io::Error),
+    #[cfg(target_os = "linux")]
+    SetFwmark(nix::Error),
+    CreateMultiplexerObfuscator(io::Error),
+    RunMultiplexerObfuscator(io::Error),
+}
+```
+
+### Failure Handling
+
+Obfuscation failures trigger tunnel reconnection (`obfuscation.rs:61-76`):
+
+```rust
+let obfuscation_task = tokio::spawn(async move {
+    match obfuscator.run().await {
+        Ok(_) => {
+            let _ = close_msg_sender.send(CloseMsg::ObfuscatorExpired);
+        }
+        Err(error) => {
+            log::error!("Obfuscation controller failed: {}", error);
+            let _ = close_msg_sender.send(
+                CloseMsg::ObfuscatorFailed(Error::ObfuscationError(error))
+            );
+        }
+    }
+});
+```
+
+Obfuscation errors are marked as recoverable (`talpid-wireguard/src/lib.rs:105`).
+
+## Performance Characteristics
+
+### Latency Impact
+
+| Protocol | Added Latency | Notes |
+|----------|---------------|-------|
+| UDP2TCP | ~5-20ms | TCP handshake + retransmissions |
+| Shadowsocks | &lt;1ms | Single encryption/decryption |
+| QUIC | ~10-30ms | QUIC handshake (0-RTT after first connection) |
+| LWO | &lt;0.5ms | Simple XOR operation |
+
+### Throughput Impact
+
+- **UDP2TCP**: May be limited by TCP congestion control
+- **Shadowsocks**: Minimal (~95% of baseline)
+- **QUIC**: ~90-95% due to QUIC overhead
+- **LWO**: ~99% (negligible)
+
+### CPU Usage
+
+- **UDP2TCP**: Low (kernel TCP stack)
+- **Shadowsocks**: Medium (AES-256-GCM encryption)
+- **QUIC**: Medium-High (TLS 1.3 + QUIC state machine)
+- **LWO**: Very Low (XOR only)
+
+## Configuration Examples
+
+### Settings Construction
+
+```rust
+fn settings_from_config(
+    config: &Config,
+    obfuscation_config: &Obfuscators,
+    mtu: u16,
+    #[cfg(target_os = "linux")] fwmark: Option<u32>,
+) -> ObfuscationSettings {
+    match obfuscation_config {
+        Obfuscators::Single(obfs) => settings_from_single_config(
+            config,
+            obfs,
+            mtu,
+            #[cfg(target_os = "linux")]
+            fwmark,
+        ),
+        Obfuscators::Multiplexer { direct, configs } => {
+            let mut transports = vec![];
+            
+            if let Some(direct) = direct {
+                transports.push(multiplexer::Transport::Direct(*direct));
+            }
+            
+            for obfs_config in configs {
+                let settings = settings_from_single_config(
+                    config,
+                    obfs_config,
+                    mtu,
+                    #[cfg(target_os = "linux")]
+                    fwmark,
+                );
+                transports.push(multiplexer::Transport::Obfuscated(settings));
+            }
+            
+            ObfuscationSettings::Multiplexer(multiplexer::Settings {
+                transports,
+                #[cfg(target_os = "linux")]
+                fwmark,
+            })
+        }
+    }
+}
+```
+
+### Single Obfuscation Config
+
+```rust
+fn settings_from_single_config(
+    config: &Config,
+    obfuscation_config: &ObfuscatorConfig,
+    mtu: u16,
+    #[cfg(target_os = "linux")] fwmark: Option<u32>,
+) -> ObfuscationSettings {
+    match obfuscation_config {
+        ObfuscatorConfig::Udp2Tcp { endpoint } => {
+            ObfuscationSettings::Udp2Tcp(udp2tcp::Settings {
+                peer: *endpoint,
+                #[cfg(target_os = "linux")]
+                fwmark,
+            })
+        }
+        ObfuscatorConfig::Shadowsocks { endpoint } => {
+            ObfuscationSettings::Shadowsocks(shadowsocks::Settings {
+                shadowsocks_endpoint: *endpoint,
+                wireguard_endpoint: SocketAddr::from((Ipv4Addr::LOCALHOST, 51820)),
+                #[cfg(target_os = "linux")]
+                fwmark,
+            })
+        }
+        ObfuscatorConfig::Quic { hostname, endpoint, auth_token } => {
+            let settings = quic::Settings::new(
+                *endpoint,
+                hostname.to_owned(),
+                auth_token.parse().unwrap(),
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 51820)),
+            ).mtu(mtu);
+            #[cfg(target_os = "linux")]
+            if let Some(fwmark) = fwmark {
+                return ObfuscationSettings::Quic(settings.fwmark(fwmark));
+            }
+            ObfuscationSettings::Quic(settings)
+        }
+        ObfuscatorConfig::Lwo { endpoint } => {
+            ObfuscationSettings::Lwo(lwo::Settings {
+                server_addr: *endpoint,
+                client_public_key: config.tunnel.private_key.public_key(),
+                server_public_key: config.entry_peer.public_key.clone(),
+                #[cfg(target_os = "linux")]
+                fwmark,
+            })
+        }
+    }
+}
+```
+
+## Related Documentation
+
+- [WireGuard Implementation](./wireguard.mdx) - Core tunnel that obfuscation wraps
+- [Quantum-Resistant Tunnels](./quantum-resistant.mdx) - Post-quantum cryptography layer
+- Security Documentation: `docs/security.md` in source repository

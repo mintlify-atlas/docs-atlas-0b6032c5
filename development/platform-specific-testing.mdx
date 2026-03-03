@@ -1,0 +1,586 @@
+---
+title: Platform-Specific Testing
+description: Platform-specific testing requirements, tools, and workflows for desktop, Android, and iOS
+---
+
+Each platform has unique testing requirements, tools, and workflows. This guide covers platform-specific testing considerations for Mullvad VPN.
+
+## Desktop Testing (Linux, macOS, Windows)
+
+### Prerequisites
+
+#### All Platforms
+- Latest stable Rust from https://rustup.rs/
+- Node.js 16+ and npm 8.3+
+- Protocol Buffers compiler
+
+#### macOS
+
+**Install dependencies:**
+```bash
+brew install cirruslabs/cli/tart wireguard-tools pkg-config openssl protobuf
+```
+
+**Wireshark for packet capture:**
+- Install Wireshark from https://www.wireshark.org/download.html
+- Install `wireshark-chmodbpf` component
+- Add user to `access_bpf` group:
+
+```bash
+dseditgroup -o edit -a $USER -t user access_bpf
+```
+
+**VM setup with Tart:**
+```bash
+# Download VM image
+tart clone ghcr.io/cirruslabs/macos-ventura-base:latest ventura-base
+
+# Configure test manager
+cargo run --bin test-manager set macos-ventura tart ventura-base macos \
+    --architecture aarch64 \
+    --provisioner ssh --ssh-user admin --ssh-password admin
+
+# Verify setup
+cargo run -p test-manager run-vm macos-ventura
+```
+
+#### Linux
+
+**Fedora:**
+```bash
+dnf install git gcc protobuf-devel libpcap-devel qemu \
+    podman golang-github-rootless-containers-rootlesskit slirp4netns dnsmasq \
+    dbus-devel pkgconf-pkg-config swtpm edk2-ovmf \
+    wireguard-tools
+```
+
+**Debian/Ubuntu:**
+```bash
+apt install qemu-utils qemu-system-x86 libpcap-dev slirp4netns \
+    rootlesskit dnsmasq nftables
+```
+
+**Note for Debian:** `sysctl` is only invokable by root by default.
+
+**VM setup with QEMU:**
+```bash
+# Create configuration
+cargo run --bin test-manager set debian11 qemu ./os-images/debian11.qcow2 linux \
+    --package-type deb --architecture x64 \
+    --provisioner ssh --ssh-user test --ssh-password test
+
+# Verify setup
+cargo run --bin test-manager run-vm debian11
+```
+
+#### Windows
+
+Windows VMs are typically run from Linux hosts using QEMU.
+
+**Build test-runner for Windows:**
+```bash
+./scripts/container-run.sh ./scripts/build/test-runner.sh windows
+```
+
+### Running Desktop Tests
+
+#### Unit Tests
+
+**JavaScript/TypeScript tests:**
+```bash
+cd desktop/packages/mullvad-vpn
+npm test
+```
+
+**Run specific test file:**
+```bash
+npm test -- account-number.spec.ts
+```
+
+**Watch mode:**
+```bash
+npm test -- --watch
+```
+
+#### E2E Tests
+
+**Mocked backend tests:**
+```bash
+cd desktop/packages/mullvad-vpn
+npm run e2e
+```
+
+**Run specific test suite:**
+```bash
+npm run e2e:no-build -- login.spec.ts
+```
+
+**Run with UI visible:**
+```bash
+npm run e2e:no-build -- --headed
+```
+
+**Debug mode:**
+```bash
+npm run e2e:no-build -- --debug
+```
+
+**Installed app tests:**
+```bash
+npm run e2e:sequential
+```
+
+### VM-Based Integration Tests
+
+**Setup test environment:**
+```bash
+# Build test runner
+./scripts/build/test-runner.sh macos  # or linux
+
+# Build application package
+./build.sh --dev-build
+
+# Build GUI test executable
+cd desktop/packages/mullvad-vpn
+npm run build-test-executable
+```
+
+**Run tests on Linux VM:**
+```bash
+cargo run --bin test-manager run-tests --vm debian11 \
+    --display \
+    --account 1234567890123456 \
+    --app-package <git-hash-or-tag> \
+    --app-package-to-upgrade-from 2023.2
+```
+
+**Run tests on macOS VM:**
+```bash
+cargo run --bin test-manager run-tests --vm macos-ventura \
+    --display \
+    --account 1234567890123456 \
+    --app-package <git-hash-or-tag>
+```
+
+**Run specific test:**
+```bash
+cargo run --bin test-manager run-tests --vm debian11 \
+    --display \
+    --account 1234567890123456 \
+    --test install::test_install
+```
+
+### Platform-Specific Test Areas
+
+#### macOS-Specific Tests
+
+**Tests in `test-manager/src/tests/macos.rs`:**
+- Launch daemon functionality
+- Keychain integration
+- System extension loading
+- Network extension behavior
+- Notification permissions
+
+#### Windows-Specific Tests
+
+**Tests in `test-manager/src/tests/windows.rs`:**
+- Windows Filtering Platform (WFP) integration
+- Service installation and management
+- TAP adapter functionality
+- Driver loading and unloading
+- Windows firewall integration
+
+#### Linux-Specific Tests
+
+**Tests in `test-manager/src/tests/split_tunnel.rs`:**
+- Split tunneling via cgroups
+- Network namespace management
+- iptables/nftables rules
+- systemd integration
+- D-Bus communication
+
+## Android Testing
+
+### Prerequisites
+
+- Android Studio or Android SDK command-line tools
+- Java Development Kit (JDK) 17+
+- Android device or emulator
+- Valid Mullvad account for e2e tests
+
+### Test Structure
+
+Android tests are organized by module in `android/lib/*/src/test/`:
+
+- `app/src/test` - Main application unit tests
+- `lib/billing/src/test` - Billing functionality tests
+- `lib/feature/*/src/test` - Feature module tests
+- `test/e2e` - End-to-end instrumented tests
+
+### Running Android Tests
+
+#### Unit Tests
+
+**Run all unit tests:**
+```bash
+cd android
+./gradlew testDebugUnitTest
+```
+
+**Run tests for specific module:**
+```bash
+./gradlew :app:testDebugUnitTest
+./gradlew :lib:billing:testDebugUnitTest
+./gradlew :lib:feature:account:impl:testDebugUnitTest
+```
+
+**Run with coverage:**
+```bash
+./gradlew testDebugUnitTest jacocoTestReport
+```
+
+#### Instrumented Tests
+
+**Run on connected device:**
+```bash
+./gradlew connectedDebugAndroidTest
+```
+
+#### End-to-End Tests
+
+**Configure test accounts:**
+
+Add to `~/.gradle/gradle.properties`:
+```properties
+mullvad.test.e2e.prod.accountNumber.valid=1234567890123456
+mullvad.test.e2e.prod.accountNumber.invalid=9999999999
+```
+
+**Run e2e tests:**
+```bash
+./gradlew :test:e2e:connectedDebugAndroidTest \
+    -Pmullvad.test.e2e.prod.accountNumber.valid=1234567890123456 \
+    -Pmullvad.test.e2e.prod.accountNumber.invalid=9999999999
+```
+
+**Run via ADB (for manual APK installation):**
+```bash
+adb shell 'CLASSPATH=$(pm path androidx.test.services) app_process / \
+    androidx.test.services.shellexecutor.ShellMain am instrument -w \
+    -e clearPackageData true \
+    -e mullvad.test.e2e.prod.accountNumber.valid 1234567890123456 \
+    -e mullvad.test.e2e.prod.accountNumber.invalid 9999999999 \
+    -e targetInstrumentation net.mullvad.mullvadvpn.test.e2e/androidx.test.runner.AndroidJUnitRunner \
+    androidx.test.orchestrator/.AndroidTestOrchestrator'
+```
+
+### Firebase Test Lab
+
+Run tests on multiple devices using Firebase Test Lab:
+
+**Setup:**
+```bash
+# Install gcloud CLI
+# Follow: https://firebase.google.com/docs/test-lab/android/command-line
+
+# Authenticate
+gcloud auth login
+```
+
+**Run tests:**
+```bash
+cd android
+gcloud firebase test android run \
+    --type instrumentation \
+    --app ./app/build/outputs/apk/debug/app-debug.apk \
+    --test ./test/e2e/build/outputs/apk/debug/e2e-debug.apk \
+    --device model=redfin,version=30,locale=en,orientation=portrait \
+    --use-orchestrator \
+    --environment-variables clearPackageData=true,ORG_GRADLE_PROJECT_mullvad.test.e2e.prod.accountNumber.valid=1234567890123456
+```
+
+### Android Test Artifacts
+
+Test artifacts are stored on device:
+```bash
+adb pull /sdcard/Download/test-attachments ./test-results/
+```
+
+Artifacts include:
+- Screenshots
+- Logcat output
+- Network traffic logs
+- Database dumps
+
+### Android-Specific Test Areas
+
+**Feature tests:**
+- Account management (`lib/feature/account/impl/src/test`)
+- Login flow (`lib/feature/login/impl/src/test`)
+- Device management (`lib/feature/managedevices/impl/src/test`)
+- Split tunneling (`lib/feature/splittunneling/impl/src/test`)
+- Multi-hop configuration (`lib/feature/multihop/impl/src/test`)
+- DAITA support (`lib/feature/daita/impl/src/test`)
+
+**Compose UI tests:**
+Android uses Jetpack Compose with UI testing support:
+
+```kotlin
+@Test
+fun testLoginScreen() {
+    composeTestRule.setContent {
+        LoginScreen()
+    }
+    composeTestRule.onNodeWithText("Login").assertIsDisplayed()
+}
+```
+
+## iOS Testing
+
+### Prerequisites
+
+- macOS with Xcode installed
+- iOS Simulator or physical iOS device
+- Xcode Command Line Tools
+- CocoaPods (if used)
+
+### Test Structure
+
+iOS tests are organized by framework:
+
+- `MullvadRESTTests` - REST API client tests
+- `MullvadRustRuntimeTests` - Rust FFI integration tests
+- `MullvadPostQuantumTests` - Post-quantum cryptography tests
+- `MullvadVPNTests` - Main app logic tests
+- `MullvadVPNScreenshotTests` - UI screenshot tests
+
+### Running iOS Tests
+
+#### Via Xcode
+
+1. Open `ios/MullvadVPN.xcodeproj`
+2. Select test scheme (e.g., `MullvadVPN`)
+3. Press `Cmd + U` to run tests
+
+#### Via Command Line
+
+**Run all tests:**
+```bash
+xcodebuild test \
+    -project ios/MullvadVPN.xcodeproj \
+    -scheme MullvadVPN \
+    -destination 'platform=iOS Simulator,name=iPhone 15'
+```
+
+**Run specific test target:**
+```bash
+xcodebuild test \
+    -project ios/MullvadVPN.xcodeproj \
+    -scheme MullvadRESTTests \
+    -destination 'platform=iOS Simulator,name=iPhone 15'
+```
+
+**Run on physical device:**
+```bash
+xcodebuild test \
+    -project ios/MullvadVPN.xcodeproj \
+    -scheme MullvadVPN \
+    -destination 'platform=iOS,id=<device-udid>'
+```
+
+**List available simulators:**
+```bash
+xcrun simctl list devices
+```
+
+#### Via xcodebuild with JSON output
+
+```bash
+xcodebuild test \
+    -project ios/MullvadVPN.xcodeproj \
+    -scheme MullvadVPN \
+    -destination 'platform=iOS Simulator,name=iPhone 15' \
+    -resultBundlePath ./test-results \
+    2>&1 | tee test-output.log
+```
+
+### iOS-Specific Test Areas
+
+#### REST API Tests (`MullvadRESTTests`)
+
+**Test files:**
+- `AppVersionServiceTests.swift` - App version API
+- `DefaultLocationServiceTests.swift` - Location service
+- `ServerRelayTests.swift` - Relay server selection
+- `RetryStrategyTests.swift` - Network retry logic
+- `ShadowsocksCacheCleanerTests.swift` - Cache management
+
+#### Rust Runtime Tests (`MullvadRustRuntimeTests`)
+
+**Test files:**
+- `EphemeralPeerExchangeActorTests.swift` - Peer exchange protocol
+- `TunnelObfuscationTests.swift` - Tunnel obfuscation
+
+#### Network Extension Tests
+
+iOS Network Extension requires special testing considerations:
+- Must test on actual iOS device for full functionality
+- Simulator has limited VPN capabilities
+- Requires provisioning profiles and certificates
+
+### UI Testing on iOS
+
+**Screenshot tests:**
+```bash
+xcodebuild test \
+    -project ios/MullvadVPN.xcodeproj \
+    -scheme MullvadVPNScreenshotTests \
+    -destination 'platform=iOS Simulator,name=iPhone 15'
+```
+
+**XCUITest framework:**
+```swift
+func testLoginFlow() {
+    let app = XCUIApplication()
+    app.launch()
+    
+    let loginButton = app.buttons["Login"]
+    XCTAssertTrue(loginButton.exists)
+    loginButton.tap()
+}
+```
+
+## Rust Core Testing
+
+All platforms share Rust core components that require testing.
+
+### Running Rust Tests
+
+**All workspace tests:**
+```bash
+cargo test --workspace
+```
+
+**Specific crate:**
+```bash
+cargo test -p mullvad-daemon
+cargo test -p talpid-core
+cargo test -p mullvad-api
+```
+
+**With verbose output:**
+```bash
+cargo test -- --nocapture --test-threads=1
+```
+
+**Documentation tests:**
+```bash
+cargo test --doc
+```
+
+### Platform-Specific Rust Tests
+
+**Test only on specific platform:**
+```rust
+#[cfg(target_os = "linux")]
+#[test]
+fn test_linux_specific_feature() {
+    // Linux-only test
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_macos_specific_feature() {
+    // macOS-only test
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn test_windows_specific_feature() {
+    // Windows-only test
+}
+```
+
+## Cross-Platform Test Automation
+
+### GitHub Actions
+
+Tests run automatically on pull requests and scheduled builds.
+
+**View test results:**
+- Check the "Checks" tab on pull requests
+- Review GitHub Actions workflow runs
+
+**Test workflows:**
+- `android-app.yml` - Android unit and instrumented tests
+- `desktop-*.yml` - Desktop tests for each platform
+- `ios-*.yml` - iOS build and test workflows
+
+### Test by Version Script
+
+Automate testing of specific versions:
+
+```bash
+./test-by-version.sh --help
+```
+
+This script:
+- Downloads pre-built application packages
+- Sets up test VMs
+- Runs the test suite
+- Reports results
+
+## Debugging Platform-Specific Issues
+
+### Desktop Debugging
+
+**Enable debug logging:**
+```bash
+RUST_LOG=debug ./mullvad-daemon
+```
+
+**Electron debug mode:**
+```bash
+cd desktop/packages/mullvad-vpn
+npm run develop
+```
+
+### Android Debugging
+
+**Logcat filtering:**
+```bash
+adb logcat | grep Mullvad
+```
+
+**Debug specific test:**
+```bash
+./gradlew :app:testDebugUnitTest --tests "*LoginViewModelTest.testLoginSuccess"
+```
+
+### iOS Debugging
+
+**Console output:**
+```bash
+log stream --predicate 'subsystem == "net.mullvad.vpn"'
+```
+
+**Simulator logs:**
+```bash
+xcrun simctl spawn booted log stream --predicate 'subsystem == "net.mullvad.vpn"'
+```
+
+## Best Practices
+
+1. **Test on actual hardware** - Especially for VPN functionality
+2. **Use platform-specific CI** - Each platform has its own test requirements
+3. **Mock network dependencies** - For faster, more reliable unit tests
+4. **Test permission flows** - Each platform handles permissions differently
+5. **Verify platform integration** - System extensions, services, and permissions
+6. **Test upgrade paths** - Ensure smooth updates from previous versions
+7. **Monitor test flakiness** - Platform-specific timing issues can cause flaky tests
+
+## Related Documentation
+
+- [Testing Overview](/development/testing-overview)
+- [Architecture Overview](/development/architecture-overview)
+- [Build Instructions](/development/building)

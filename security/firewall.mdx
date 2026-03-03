@@ -1,0 +1,406 @@
+---
+title: Firewall Integration
+description: Technical implementation of firewall integration on Windows (WFP), macOS (PF), and Linux (nftables)
+---
+
+Mullvad VPN integrates tightly with the native firewall on each desktop platform to enforce security policies. This page covers the technical implementation details of firewall integration.
+
+## Platform Overview
+
+Each desktop platform uses its native firewall system:
+
+| Platform | Firewall | Implementation Location |
+|----------|----------|------------------------|
+| Windows | Windows Filtering Platform (WFP) | `windows/winfw/` |
+| macOS | Packet Filter (PF) | `talpid-core` |
+| Linux | nftables | `talpid-core` |
+
+<Note>
+All platforms apply firewall rules as **atomic transactions**. There is no time window where rules are inconsistent or invalid during state changes.
+</Note>
+
+## Windows Filtering Platform (WFP)
+
+Windows uses the Windows Filtering Platform, a powerful and flexible firewall architecture introduced in Windows Vista.
+
+### WFP Architecture
+
+The `winfw` component implements security policies through a sublayer-based design:
+
+#### Sublayer Types
+
+**1. Baseline Sublayer** (Highest Weight)
+
+The baseline sublayer is weighted highest to see all traffic first:
+
+- Contains permit-filters (highest weight within sublayer)
+- Contains blocking filters (lowest weight within sublayer)  
+- Different policies activate different subsets of permit-filters
+- All permit-filters have equal weight (order doesn't matter)
+- Blocking filters match all traffic as a catch-all
+
+When traffic matches a permit-filter, it's "lifted" out and processing continues with the next sublayer. If traffic reaches the blocking filters, it's dropped.
+
+**2. Specialized Sublayers** (Lower Weight)
+
+Additional sublayers focus on specific traffic types:
+
+- All weighted the same, slightly lower than baseline
+- Example: DNS-specific sublayer with DNS permit-filters and DNS blocking filter
+- Uses the same permit/block design pattern
+- Non-relevant traffic passes through unchanged
+
+**3. Persistent Sublayer** (Active When Deinitialized)
+
+Only active when `winfw` is deinitialized with blocking policy:
+
+- Highest weight possible
+- Contains only blocking filters matching all traffic
+- Ensures traffic is blocked until reinitialized
+- Active during boot-time before BFE (Base Filtering Engine) starts
+- Persists even if BFE is restarted (e.g., during reboot)
+
+### WFP Implementation Benefits
+
+- **Predictable sublayer weights**: Clear hierarchy of rule processing
+- **Predictable filter weights**: Consistent permit-first, block-last pattern
+- **Short filter conditions**: Exact conditions without redundancy
+- **No logical AND required**: WFP doesn't support AND for same-type conditions; design avoids this limitation
+
+### Process-Specific Filtering
+
+Windows allows restricting firewall rules to specific processes:
+
+```
+// Example: Only allow mullvad-daemon.exe to reach VPN server
+Allow: VPN_SERVER_IP:VPN_PORT/UDP from mullvad-daemon.exe
+```
+
+This prevents unprivileged programs from leaking packets to the VPN server IP, which could be fingerprinted by attackers.
+
+### Persistent Filters
+
+When the `mullvad-daemon` service exits, persistent filters may be added if:
+
+- Lockdown mode is enabled, OR
+- User didn't explicitly request shutdown AND either:
+  - Daemon is in a blocking state (Connected, Connecting, Error), OR
+  - Auto-connect is enabled
+
+These persistent filters:
+- Block traffic before the service restarts during boot
+- Remain active before BFE starts
+- Prevent boot-time leaks
+
+See `windows/winfw/README.md` for more details.
+
+## macOS Packet Filter (PF)
+
+macOS uses Packet Filter (PF), a stateful firewall originally from OpenBSD.
+
+### PF Implementation
+
+The Mullvad daemon manages PF rules through anchors:
+
+- **Anchors**: Named rulesets that can be updated atomically
+- **Atomic updates**: All rules are loaded/updated as a single transaction
+- **State tracking**: PF maintains connection state for stateful filtering
+
+### PF Rule Structure
+
+Typical Mullvad PF ruleset structure:
+
+```pf
+# Block all traffic by default
+block drop all
+
+# Allow loopback
+pass quick on lo0
+
+# Allow DHCP
+pass out quick proto udp from any port 68 to any port 67
+pass in quick proto udp from any port 67 to any port 68
+
+# Allow tunnel establishment (root processes only)
+pass out quick proto udp from any to VPN_SERVER_IP port VPN_PORT user root
+
+# Allow tunnel traffic
+pass quick on utun<N>
+```
+
+### Process/User Filtering
+
+PF on macOS can filter by user but not by specific process:
+
+```pf
+# Only allow root user to reach VPN server
+pass out proto udp to VPN_SERVER_IP port VPN_PORT user root
+```
+
+This prevents non-root processes from leaking to the VPN server endpoint.
+
+### macOS Boot-Time Limitations
+
+<Warning>
+macOS does not allow system services to specify dependencies or start order. The `mullvad-daemon` cannot be forced to start before the network is initialized, creating a potential boot-time leak window.
+</Warning>
+
+This is a known limitation documented in the [known issues](https://github.com/mullvad/mullvadvpn-app/blob/main/docs/known-issues.md).
+
+### Shutdown Protection
+
+When `mullvad-daemon` exits, it transitions to the Disconnected state to limit leaks during shutdown. However, it maintains blocking firewall rules when:
+
+- Lockdown mode is enabled, OR
+- User didn't explicitly request shutdown AND either:
+  - Daemon is in a blocking state, OR
+  - Auto-connect is enabled
+
+In other cases, firewall rules are removed on normal exit.
+
+## Linux nftables
+
+Linux uses nftables, the modern replacement for iptables with better performance and atomic rule updates.
+
+### nftables Implementation
+
+The Mullvad daemon manages nftables through:
+
+- **Tables**: Top-level container for chains
+- **Chains**: Contain rules that match and act on packets  
+- **Atomic updates**: All rules are applied as a single transaction
+- **Firewall marks**: Used to identify tunnel traffic
+
+### nftables Rule Structure
+
+Typical Mullvad nftables configuration:
+
+```nftables
+# Create table
+table inet mullvad
+
+# Block all traffic by default
+chain filter {
+  type filter hook output priority 0; policy drop;
+  type filter hook input priority 0; policy drop;
+}
+
+# Allow loopback
+chain filter {
+  oif "lo" accept
+  iif "lo" accept  
+}
+
+# Allow DHCP
+chain filter {
+  udp sport 68 udp dport 67 accept
+  udp sport 67 udp dport 68 accept
+}
+
+# Allow tunnel establishment (with firewall mark)
+chain filter {
+  mark 0x6d6f6c65 ip daddr VPN_SERVER_IP udp dport VPN_PORT accept
+}
+
+# Allow tunnel traffic
+chain filter {
+  oif "wg-mullvad" accept
+  iif "wg-mullvad" accept
+}
+```
+
+### Firewall Marks
+
+Linux uses firewall marks to identify privileged tunnel traffic:
+
+- Mark `0x6d6f6c65` ("mole" in hex ASCII) identifies tunnel establishment traffic
+- Only processes with elevated privileges can set firewall marks
+- Rules allow traffic to VPN server IP only if mark is set
+- Prevents unprivileged processes from leaking to VPN server
+
+On systems without mark support, the rule falls back to only allowing traffic from root processes (similar to macOS).
+
+### Packet Forwarding
+
+On Linux, situations that permit incoming or outgoing traffic also allow packet forwarding:
+
+```nftables
+chain forward {
+  type filter hook forward priority 0;
+  # Forward rules match output/input rules
+  # All other forward traffic is rejected
+}
+```
+
+This prevents the device from acting as a router that could leak forwarded traffic.
+
+### Early-Boot Protection
+
+<Note>
+Due to service dependencies, `mullvad-daemon` doesn't start early enough to prevent boot-time leaks. A separate system unit starts during early boot to apply blocking policy until `mullvad-daemon` takes over.
+</Note>
+
+The early-boot unit:
+
+- Starts before network initialization
+- Applies blocking nftables rules
+- Removed once `mullvad-daemon` starts and applies its rules
+- Prevents leaks during the boot process
+
+Implemented as a systemd service with appropriate ordering directives.
+
+### Shutdown Protection
+
+Similar to other platforms, Linux maintains blocking rules on daemon exit when:
+
+- Lockdown mode is enabled, OR  
+- User didn't explicitly request shutdown AND either:
+  - Daemon is in a blocking state, OR
+  - Auto-connect is enabled
+
+Rules are removed on normal shutdown in other cases.
+
+### ARP Protection
+
+Linux (and Android) by default reply to ARP requests for any local IP on any interface. This can leak the tunnel IP to the local network.
+
+Mullvad sets the kernel parameter `net.ipv4.conf.all.arp_ignore=2` when a tunnel is active:
+
+```bash
+sysctl -w net.ipv4.conf.all.arp_ignore=2
+```
+
+This ensures the system only replies to ARP requests if the target IP is assigned to the interface where the request arrived.
+
+<Warning>
+On Android, apps cannot set kernel parameters. This ARP leak is a known limitation on Android. Mullvad has [reported this to Google](https://issuetracker.google.com/issues/378814597).
+</Warning>
+
+## Firewall Rule Examples
+
+Here are concrete examples of rules applied in different states:
+
+### Connecting State
+
+**Windows (WFP):**
+```
+Permit: UDP to 198.51.100.10:51820 from mullvad-daemon.exe
+Block: All other traffic
+```
+
+**macOS (PF):**  
+```pf
+pass out proto udp to 198.51.100.10 port 51820 user root
+block drop all
+```
+
+**Linux (nftables):**
+```nftables
+mark 0x6d6f6c65 ip daddr 198.51.100.10 udp dport 51820 accept
+policy drop
+```
+
+### Connected State
+
+**Windows (WFP):**
+```
+Permit: All traffic on tunnel interface
+Permit: UDP to 198.51.100.10:51820 from mullvad-daemon.exe
+Permit: DNS to 10.66.0.1 through tunnel interface
+Block: DNS to any other address
+Block: All other traffic
+```
+
+**macOS (PF):**
+```pf
+pass quick on utun3
+pass out proto udp to 198.51.100.10 port 51820 user root
+pass out proto {tcp udp} to 10.66.0.1 port 53 route-to utun3
+block drop proto {tcp udp} to any port 53
+block drop all
+```
+
+**Linux (nftables):**  
+```nftables
+oif "wg-mullvad" accept
+iif "wg-mullvad" accept
+mark 0x6d6f6c65 ip daddr 198.51.100.10 udp dport 51820 accept
+ip daddr 10.66.0.1 tcp dport 53 oif "wg-mullvad" accept
+ip daddr 10.66.0.1 udp dport 53 oif "wg-mullvad" accept  
+tcp dport 53 drop
+udp dport 53 drop
+policy drop
+```
+
+### Error State
+
+**All Platforms:**
+- Block all traffic
+- Allow only the always-allowed exceptions (loopback, DHCP, NDP)
+- Allow Mullvad API access
+
+## Mobile Platforms
+
+Mobile platforms cannot directly manipulate the system firewall:
+
+### Android
+
+Android uses the VPN Service API instead of direct firewall access:
+
+- App registers as VPN service with the system
+- Sets routes `0/0` and `::0/0` to route all traffic through the app
+- System routes all traffic through the VPN interface
+- App can then filter/block traffic at the VPN interface level
+- "Block connections without VPN" system setting provides additional OS-level protection
+
+<Warning>
+Some traffic is exempt by the Android system and bypasses the VPN:
+- Connectivity checks (DNS and HTTP(S))
+- Network time (NTP)
+- Hotspot client traffic
+
+This is an Android limitation Mullvad cannot prevent.
+</Warning>
+
+### iOS  
+
+iOS uses Network Extension framework:
+
+- Packet Tunnel Provider extension handles traffic
+- Configures routing rules to send all traffic through tunnel
+- WireGuard-go handles traffic at the tun interface level
+- Cannot directly manipulate iOS firewall rules
+
+## Testing Firewall Rules
+
+You can verify firewall rules are active:
+
+**Windows:**
+```powershell
+netsh wfp show filters
+```
+
+**macOS:**
+```bash
+sudo pfctl -sr
+```
+
+**Linux:**  
+```bash
+sudo nft list ruleset
+```
+
+Look for Mullvad-specific tables, chains, or anchors in the output.
+
+## Related Documentation
+
+- [Leak Protection](/security/leak-protection) - How firewall rules prevent leaks
+- [Tunnel States](/security/tunnel-states) - What rules are active in each state  
+- [Kill Switch](/security/kill-switch) - Always-on protection mechanism
+- [Architecture](/architecture/overview) - System design and components
+
+## Source Code References
+
+- Windows WFP: `windows/winfw/` ([README](https://github.com/mullvad/mullvadvpn-app/blob/main/windows/winfw/README.md))
+- macOS/Linux: `talpid-core/src/firewall/`
+- Firewall integration design: `docs/architecture.md`

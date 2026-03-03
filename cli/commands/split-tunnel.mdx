@@ -1,0 +1,287 @@
+---
+title: "mullvad split-tunnel"
+description: "Manage split tunneling for processes (Linux only)"
+---
+
+## Overview
+
+The `mullvad split-tunnel` command manages split tunneling by excluding specific processes from the VPN tunnel. This feature is currently available on Linux only.
+
+**Note:** To launch applications outside the tunnel, use the `mullvad-exclude` program instead of this command.
+
+## Syntax
+
+```bash
+mullvad split-tunnel <SUBCOMMAND>
+```
+
+## Platform Support
+
+Split tunneling implementation varies by platform:
+
+- **Linux** - Process-based split tunneling (by PID)
+- **macOS** - Application-based split tunneling
+- **Windows** - Application-based split tunneling
+
+This documentation covers the Linux implementation. See the platform-specific documentation for macOS and Windows.
+
+## Subcommands
+
+### list
+
+List all processes excluded from the tunnel:
+
+```bash
+mullvad split-tunnel list
+```
+
+### add
+
+Add a process ID (PID) to exclude from the tunnel:
+
+```bash
+mullvad split-tunnel add <PID>
+```
+
+**Arguments:**
+- `<PID>` - Process ID to exclude
+
+### delete
+
+Remove a PID from the exclusion list:
+
+```bash
+mullvad split-tunnel delete <PID>
+```
+
+**Arguments:**
+- `<PID>` - Process ID to stop excluding
+
+### clear
+
+Remove all processes from the exclusion list:
+
+```bash
+mullvad split-tunnel clear
+```
+
+## Examples
+
+### List Excluded Processes
+
+```bash
+mullvad split-tunnel list
+```
+
+Output:
+```
+Excluded PIDs:
+12345
+67890
+```
+
+No excluded processes:
+```
+Excluded PIDs:
+```
+
+### Add Process by PID
+
+Find the process ID first:
+
+```bash
+pidof firefox
+```
+
+Output:
+```
+12345
+```
+
+Exclude the process:
+
+```bash
+mullvad split-tunnel add 12345
+```
+
+Output:
+```
+Excluding process
+```
+
+### Remove Process from Exclusions
+
+```bash
+mullvad split-tunnel delete 12345
+```
+
+Output:
+```
+Stopped excluding process
+```
+
+### Clear All Exclusions
+
+```bash
+mullvad split-tunnel clear
+```
+
+Output:
+```
+Stopped excluding all processes
+```
+
+## Using mullvad-exclude
+
+The recommended way to launch applications outside the tunnel is using the `mullvad-exclude` program:
+
+### Launch Application
+
+Start Firefox outside the tunnel:
+
+```bash
+mullvad-exclude firefox
+```
+
+Start application with arguments:
+
+```bash
+mullvad-exclude wget https://example.com/file.zip
+```
+
+Start with environment variables:
+
+```bash
+HTTP_PROXY=proxy.example.com mullvad-exclude curl https://example.com
+```
+
+### Process Exclusion Behavior
+
+When you exclude a process:
+
+1. The process and all its child processes bypass the VPN
+2. Network traffic uses your normal internet connection
+3. The process has your real IP address
+4. DNS queries may use system DNS (not VPN DNS)
+
+## Process IDs and Exclusions
+
+### Finding PIDs
+
+Find process ID by name:
+
+```bash
+pidof <process_name>
+```
+
+Find process with details:
+
+```bash
+ps aux | grep <process_name>
+```
+
+List all PIDs for a user:
+
+```bash
+ps -u $USER -o pid,comm
+```
+
+### PID Limitations
+
+Process IDs are temporary:
+
+- PIDs are only valid while the process is running
+- When a process exits, its PID becomes invalid
+- Restarting an application creates a new PID
+- Excluded PIDs are automatically cleaned up when processes exit
+
+For persistent exclusions, use `mullvad-exclude` to launch applications.
+
+## Use Cases
+
+### Exclude Specific Application
+
+Route web browser outside VPN:
+
+```bash
+mullvad-exclude firefox &
+```
+
+### Local Network Access
+
+Exclude local services:
+
+```bash
+mullvad-exclude ssh user@192.168.1.100
+```
+
+### Testing and Debugging
+
+Compare connection with and without VPN:
+
+```bash
+# With VPN
+curl https://am.i.mullvad.net/json
+
+# Without VPN
+mullvad-exclude curl https://am.i.mullvad.net/json
+```
+
+### Performance-Sensitive Applications
+
+Exclude applications that don't need VPN:
+
+```bash
+mullvad-exclude steam
+```
+
+## Security Considerations
+
+### What Gets Excluded
+
+When you exclude a process:
+
+- ✓ Process bypasses VPN tunnel
+- ✓ Uses real IP address
+- ✓ Uses system DNS
+- ✓ Subject to ISP monitoring
+- ✓ Not protected by VPN encryption
+
+### What Stays Protected
+
+All other processes:
+
+- ✓ Route through VPN
+- ✓ Use VPN IP address
+- ✓ Use VPN DNS
+- ✓ Protected by VPN encryption
+
+### Privacy Warning
+
+Excluded processes expose your real IP address and are not protected by the VPN. Only exclude processes when necessary.
+
+## Related Commands
+
+- [connect](/cli/commands/connect) - Connect to VPN
+- [lan](/cli/commands/lan) - Configure local network access
+- [tunnel](/cli/commands/tunnel) - Configure tunnel options
+
+## Exit Status
+
+| Code | Description |
+|------|-------------|
+| 0 | Command executed successfully |
+| 1 | Invalid PID or operation failed |
+
+## Notes
+
+- Split tunneling is implemented differently on each platform (see platform docs)
+- On Linux, split tunneling works by process ID
+- Use `mullvad-exclude` for persistent exclusions
+- Excluded processes are not protected by VPN encryption
+- PIDs are automatically cleaned up when processes exit
+- Child processes of excluded processes are also excluded
+
+## Source Reference
+
+Implementation: `mullvad-cli/src/cmds/split_tunnel/linux.rs`

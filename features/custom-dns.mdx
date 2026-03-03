@@ -1,0 +1,566 @@
+---
+title: 'Custom DNS Servers'
+description: 'Configure custom DNS resolvers or use Mullvad DNS with content blocking'
+---
+
+## Overview
+
+DNS (Domain Name System) translates human-readable domain names (like `example.com`) into IP addresses. By default, Mullvad routes all DNS requests through the VPN tunnel to the relay server, preventing DNS leaks and ensuring privacy.
+
+With custom DNS, you can:
+- **Use your own DNS servers**: Private DNS, corporate DNS, or public resolvers
+- **Enable content blocking**: Block ads, trackers, malware, adult content, gambling, or social media
+- **Access local services**: Use private DNS servers on your network
+
+<Note>
+Custom DNS is available on all platforms: Windows, Linux, macOS, Android, and iOS.
+</Note>
+
+## DNS Options
+
+Mullvad provides two DNS configurations:
+
+### Default DNS (Mullvad's DNS)
+
+Uses Mullvad's DNS resolver running on the VPN relay server:
+
+- **Resolver**: VPN relay server (gateway IP)
+- **Privacy**: No logging, no third-party involvement
+- **Content blocking**: Optional filtering (ads, trackers, malware, etc.)
+- **Performance**: Low latency (DNS on same server as VPN)
+
+### Custom DNS
+
+Use your own DNS servers:
+
+- **Resolver**: Any IP address (public or private)
+- **Privacy**: Depends on chosen DNS provider
+- **Content blocking**: Depends on DNS provider
+- **Performance**: Varies by server location and load
+
+## Default DNS with Content Blocking
+
+### Available Blockers
+
+Mullvad's DNS supports six types of content blocking:
+
+| Blocker | Blocks | Use Case |
+|---------|--------|----------|
+| **Ads** | Advertisement domains | Remove ads from websites and apps |
+| **Trackers** | Tracking and analytics domains | Enhance privacy, prevent tracking |
+| **Malware** | Known malicious domains | Security protection |
+| **Adult Content** | Adult/NSFW domains | Family safety, parental controls |
+| **Gambling** | Gambling and betting sites | Responsible usage controls |
+| **Social Media** | Social networking platforms | Productivity, digital wellness |
+
+<Info>
+Content blockers use DNS-based filtering. They block entire domains but cannot block specific pages or content within a site.
+</Info>
+
+### Enabling Content Blockers
+
+#### Using the GUI
+
+<Steps>
+  <Step title="Open DNS Settings">
+    Navigate to **Settings** → **VPN settings** → **DNS settings**
+  </Step>
+  
+  <Step title="Ensure Default DNS">
+    Verify **Use default DNS** is selected (not custom DNS)
+  </Step>
+  
+  <Step title="Enable Blockers">
+    Toggle on desired content blockers:
+    - ☑ **Block ads**
+    - ☑ **Block trackers**
+    - ☑ **Block malware**
+    - ☐ **Block adult content**
+    - ☐ **Block gambling**
+    - ☐ **Block social media**
+  </Step>
+  
+  <Step title="Apply Changes">
+    Settings apply immediately (no reconnection needed)
+  </Step>
+</Steps>
+
+#### Using the CLI
+
+```bash
+# View current DNS settings
+mullvad dns get
+
+# Enable content blockers
+mullvad dns set default \
+  --block-ads \
+  --block-trackers \
+  --block-malware
+
+# Enable all blockers
+mullvad dns set default \
+  --block-ads \
+  --block-trackers \
+  --block-malware \
+  --block-adult-content \
+  --block-gambling \
+  --block-social-media
+
+# Disable all blockers (use default DNS without filtering)
+mullvad dns set default
+```
+
+### How Content Blocking Works
+
+1. **App makes DNS request**: `example-ad-network.com`
+2. **Mullvad DNS checks blocklist**: Is domain in ad blocker list?
+3. **Block or allow**:
+   - **Blocked**: Returns `0.0.0.0` or `NXDOMAIN` (domain does not exist)
+   - **Allowed**: Returns real IP address
+
+<Warning>
+**Limitations of DNS-based blocking:**
+- Cannot block specific URLs (only entire domains)
+- Cannot block first-party ads (ads served from same domain)
+- Does not inspect or modify content (unlike browser ad blockers)
+- Some sites may detect and restrict access if ads are blocked
+</Warning>
+
+## Custom DNS Servers
+
+### When to Use Custom DNS
+
+✅ **Use custom DNS for:**
+- Private DNS servers on your network
+- Corporate/organizational DNS
+- Specific DNS providers (Cloudflare, Google, Quad9)
+- Advanced filtering services
+- Local domain resolution
+
+### Popular Public DNS Servers
+
+| Provider | IPv4 | IPv6 | Features |
+|----------|------|------|----------|
+| **Cloudflare** | `1.1.1.1`, `1.0.0.1` | `2606:4700:4700::1111` | Fast, privacy-focused |
+| **Google** | `8.8.8.8`, `8.8.4.4` | `2001:4860:4860::8888` | Reliable, widely available |
+| **Quad9** | `9.9.9.9` | `2620:fe::fe` | Malware blocking |
+| **OpenDNS** | `208.67.222.222`, `208.67.220.220` | `2620:119:35::35` | Filtering, parental controls |
+
+### Configuring Custom DNS
+
+#### Using the GUI
+
+<Steps>
+  <Step title="Open DNS Settings">
+    Navigate to **Settings** → **VPN settings** → **DNS settings**
+  </Step>
+  
+  <Step title="Select Custom DNS">
+    Choose **Use custom DNS**
+  </Step>
+  
+  <Step title="Add DNS Servers">
+    - Click **Add**
+    - Enter DNS server IP address (IPv4 or IPv6)
+    - Add multiple servers (primary, secondary)
+  </Step>
+  
+  <Step title="Save">
+    Changes apply immediately
+  </Step>
+</Steps>
+
+#### Using the CLI
+
+```bash
+# Set custom DNS servers
+mullvad dns set custom 1.1.1.1 1.0.0.1
+
+# Use Google DNS
+mullvad dns set custom 8.8.8.8 8.8.4.4
+
+# IPv6 DNS
+mullvad dns set custom 2606:4700:4700::1111
+
+# Multiple servers (primary and fallback)
+mullvad dns set custom 1.1.1.1 8.8.8.8 9.9.9.9
+
+# Return to default DNS
+mullvad dns set default
+```
+
+### Private DNS Servers
+
+For private networks (home, office):
+
+```bash
+# Local DNS server
+mullvad dns set custom 192.168.1.1
+
+# Corporate DNS
+mullvad dns set custom 10.0.0.53 10.0.1.53
+```
+
+<Info>
+**Private DNS behavior:**
+- Private IPs (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) are accessed outside the tunnel (via LAN)
+- Requires [Local Network Access](/features/local-network-access) enabled
+- Public IPs are accessed through the VPN tunnel
+</Info>
+
+## DNS Routing Behavior
+
+### Default DNS (Mullvad)
+
+- **All DNS requests**: Sent **inside the tunnel** to relay server
+- **No leaks**: DNS never leaves the VPN
+- **Privacy**: Mullvad's no-logs policy applies
+
+### Custom Public DNS
+
+Public DNS servers (e.g., `8.8.8.8`, `1.1.1.1`):
+
+- **Routed through VPN tunnel**
+- **VPN IP address**: DNS provider sees VPN server IP, not your real IP
+- **Privacy**: Depends on DNS provider's logging policy
+
+### Custom Private DNS
+
+Private DNS servers (e.g., `192.168.1.1`, `10.0.0.53`):
+
+- **Routed outside tunnel** (direct connection)
+- **Requires**: [Local network access](/features/local-network-access) enabled
+- **Use case**: Access local domains (e.g., `printer.local`, `nas.home`)
+
+<Warning>
+**macOS limitation**: Private custom DNS is not supported. All custom DNS is routed through the tunnel, regardless of IP range.
+</Warning>
+
+## DNS Leak Protection
+
+Mullvad prevents DNS leaks through firewall rules:
+
+### Blocked DNS Requests
+
+In the **Connected** state, the firewall:
+- **Allows**: DNS to relay server (default) or custom DNS servers
+- **Blocks**: DNS to any other destination (port 53 TCP/UDP)
+
+### Example Scenarios
+
+| Destination | Default DNS | Custom DNS (1.1.1.1) | Result |
+|-------------|-------------|----------------------|--------|
+| Relay gateway | ✅ Allowed | ❌ Blocked | As configured |
+| `1.1.1.1` | ❌ Blocked | ✅ Allowed | As configured |
+| `8.8.8.8` | ❌ Blocked | ❌ Blocked | Prevents leak |
+| ISP DNS | ❌ Blocked | ❌ Blocked | Prevents leak |
+
+<Info>
+DNS requests to unauthorized destinations are blocked by the firewall, even if your OS or apps try to use different DNS servers.
+</Info>
+
+## DNS in Different Tunnel States
+
+### Connected State
+
+- **Default DNS**: Requests to relay gateway allowed
+- **Custom DNS**: Requests to specified servers allowed
+- **All other DNS**: Blocked by firewall
+
+### Disconnected State
+
+- **Default behavior**: System DNS used (typically ISP's DNS)
+- **No DNS enforcement**: Mullvad does not modify DNS settings
+
+### Connecting, Disconnecting, Error States
+
+- **All DNS requests blocked** (except API traffic)
+- Protects against DNS leaks during connection transitions
+- Part of the [kill switch](/security/kill-switch) functionality
+
+## Compatibility
+
+Custom DNS works with:
+
+- ✅ [WireGuard protocol](/features/wireguard)
+- ✅ [Quantum-resistant tunnels](/features/quantum-resistant)
+- ✅ [Multihop](/features/multihop)
+- ✅ [DAITA](/features/daita)
+- ✅ [Obfuscation protocols](/features/obfuscation)
+- ✅ [Split tunneling](/features/split-tunneling)*
+- ✅ [Local network access](/features/local-network-access)
+
+*See [DNS with Split Tunneling](#dns-with-split-tunneling) for behavior.
+
+## DNS with Split Tunneling
+
+DNS behavior is complex when [split tunneling](/features/split-tunneling) is enabled:
+
+### Desktop (Windows, Linux, macOS)
+
+DNS requests from **excluded apps**:
+- Still go through **system DNS resolver**
+- System DNS resolver uses **tunnel DNS** (not excluded)
+- Result: Excluded apps use **same DNS as normal apps**
+
+<Warning>
+On desktop, split tunneling does NOT split DNS. All DNS requests (including from excluded apps) use the VPN's DNS configuration.
+</Warning>
+
+### Android
+
+DNS requests from **excluded apps**:
+- Bypasses VPN entirely
+- Uses **system DNS** (typically from WiFi/mobile network)
+- Result: Excluded apps use **different DNS than normal apps**
+
+## DNS Methods (Advanced)
+
+Mullvad supports multiple DNS configuration methods on Linux:
+
+### Available Methods
+
+Set via `TALPID_DNS_MODULE` environment variable:
+
+| Method | Description | Use When |
+|--------|-------------|----------|
+| `static-file` | Modifies `/etc/resolv.conf` directly | Default on most systems |
+| `resolvconf` | Uses `resolvconf` program | System has resolvconf installed |
+| `systemd` | Uses systemd-resolved via DBus | systemd-resolved is active |
+| `network-manager` | Uses NetworkManager via DBus | NetworkManager manages network |
+
+Default is **auto-detected** based on system configuration.
+
+### Overriding DNS Method (Linux)
+
+```bash
+# Force static file method
+export TALPID_DNS_MODULE=static-file
+sudo systemctl restart mullvad-daemon
+
+# Force systemd-resolved
+export TALPID_DNS_MODULE=systemd
+sudo systemctl restart mullvad-daemon
+```
+
+## Troubleshooting
+
+### DNS Not Working
+
+If you cannot resolve domain names:
+
+1. **Check DNS settings**:
+   ```bash
+   mullvad dns get
+   ```
+
+2. **Test DNS resolution**:
+   ```bash
+   # Should work
+   nslookup mullvad.net
+   
+   # Should work if custom DNS is 8.8.8.8
+   nslookup example.com 8.8.8.8
+   ```
+
+3. **Return to default DNS**:
+   ```bash
+   mullvad dns set default
+   ```
+
+4. **Reconnect**:
+   ```bash
+   mullvad disconnect
+   mullvad connect
+   ```
+
+### Private DNS Not Accessible
+
+If private DNS server (e.g., `192.168.1.1`) is unreachable:
+
+1. **Enable local network access**:
+   ```bash
+   mullvad lan set allow
+   ```
+
+2. **Verify server is on local network**: Ensure it's actually a LAN address
+
+3. **Test connectivity**:
+   ```bash
+   ping 192.168.1.1
+   ```
+
+4. **macOS**: Private DNS not supported; use default or public DNS
+
+### Content Blocking Not Working
+
+If ads/trackers still appear:
+
+1. **Verify blockers enabled**:
+   ```bash
+   mullvad dns get
+   ```
+   
+   Should show:
+   ```
+   Custom DNS: no
+   Block ads: true
+   Block trackers: true
+   ```
+
+2. **Clear DNS cache**:
+   
+   **Windows**:
+   ```bash
+   ipconfig /flushdns
+   ```
+   
+   **macOS**:
+   ```bash
+   sudo dscacheutil -flushcache
+   sudo killall -HUP mDNSResponder
+   ```
+   
+   **Linux**:
+   ```bash
+   sudo systemd-resolve --flush-caches
+   ```
+
+3. **Test blocked domain**:
+   ```bash
+   nslookup doubleclick.net
+   ```
+   
+   Should return `0.0.0.0` or NXDOMAIN
+
+4. **Browser cache**: Clear browser cache and reload
+
+5. **First-party ads**: DNS blocking cannot block ads from same domain
+
+### DNS Leaks
+
+To verify no DNS leaks:
+
+1. **Use leak test site**:
+   ```
+   https://mullvad.net/en/check
+   ```
+
+2. **Should show**: Mullvad DNS servers (or your custom DNS)
+
+3. **Should NOT show**: ISP DNS servers or unexpected DNS
+
+4. **If leaking**: Check firewall rules, reconnect VPN
+
+## Best Practices
+
+### Privacy-Focused Configuration
+
+```bash
+# Use default DNS with tracking protection
+mullvad dns set default --block-ads --block-trackers --block-malware
+```
+
+Advantages:
+- No third-party DNS providers
+- Mullvad's no-logs policy
+- Content blocking included
+- Lowest latency (DNS on relay server)
+
+### Public DNS Provider
+
+```bash
+# Use Cloudflare (privacy-focused)
+mullvad dns set custom 1.1.1.1 1.0.0.1
+
+# Use Quad9 (malware blocking)
+mullvad dns set custom 9.9.9.9
+```
+
+Considerations:
+- Trust DNS provider's privacy policy
+- May have better performance in some regions
+- Some provide additional filtering
+
+### Local Network DNS
+
+```bash
+# Enable LAN access
+mullvad lan set allow
+
+# Use local DNS server
+mullvad dns set custom 192.168.1.1
+```
+
+Use cases:
+- Access local devices by hostname
+- Corporate network DNS
+- Pi-hole or local ad blocker
+
+## Performance Considerations
+
+### DNS Latency
+
+- **Default DNS**: ~1-5ms (on relay server)
+- **Custom public DNS**: Varies (typically 10-50ms)
+- **Custom private DNS**: Depends on LAN (usually &lt;10ms)
+
+### DNS Caching
+
+- **System DNS cache**: Reduces repeated lookups
+- **Browser DNS cache**: Further optimization
+- **TTL**: Respect DNS Time-To-Live values
+
+## Related Features
+
+- [Local Network Access](/features/local-network-access) - Required for private DNS
+- [Split Tunneling](/features/split-tunneling) - DNS behavior with excluded apps
+- [Kill Switch](/security/kill-switch) - DNS leak protection during transitions
+- [Content Blockers](/features/content-blockers) - DNS-based filtering
+
+## Technical Details
+
+### DNS Configuration Methods
+
+From source code (mullvad-types/src/settings/dns.rs):
+
+```rust
+pub enum DnsState {
+    Default,   // Use Mullvad DNS
+    Custom,    // Use custom DNS servers
+}
+
+pub struct DnsOptions {
+    pub state: DnsState,
+    pub default_options: DefaultDnsOptions,  // Content blockers
+    pub custom_options: CustomDnsOptions,    // Custom IPs
+}
+
+pub struct DefaultDnsOptions {
+    pub block_ads: bool,
+    pub block_trackers: bool,
+    pub block_malware: bool,
+    pub block_adult_content: bool,
+    pub block_gambling: bool,
+    pub block_social_media: bool,
+}
+
+pub struct CustomDnsOptions {
+    pub addresses: Vec<IpAddr>,
+}
+```
+
+### Firewall Rules
+
+Mullvad's firewall allows DNS only to:
+- Relay gateway IP (when using default DNS)
+- Configured custom DNS IPs (when using custom DNS)
+- Loopback interface (always allowed)
+
+All other DNS traffic (port 53 TCP/UDP) is **blocked**.
+
+## Further Reading
+
+- [DNS Security and Privacy](https://mullvad.net/en/help/tag/dns/)
+- [DNS Leak Testing](https://mullvad.net/en/check)
+- [Mullvad DNS Settings (CLI)](https://mullvad.net/en/help/cli-command-wg/)

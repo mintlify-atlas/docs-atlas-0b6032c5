@@ -1,80 +1,374 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick start
+description: Get connected to Mullvad VPN in minutes with this step-by-step guide
 ---
 
-## Get started in three steps
+This guide walks you through everything from installation to your first secure VPN connection.
 
-Get your documentation site running locally and make your first customization.
+## Before you begin
 
-### Step 1: Set up your local environment
+You'll need:
+
+- A device running Windows, macOS, Linux, Android, or iOS
+- Administrator/installation privileges (for desktop platforms)
+- A Mullvad account (we'll show you how to create one)
+
+<Note>
+  Mullvad doesn't require email addresses or personal information. You'll receive an account number instead.
+</Note>
+
+## Step 1: Install Mullvad VPN
+
+Choose your platform and follow the installation instructions:
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="Windows">
+    1. Download the Windows installer from [mullvad.net/download](https://mullvad.net/download/)
+    2. Run the `.exe` file and click through the installer
+    3. The app will launch automatically when installation completes
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+  
+  <Accordion title="macOS">
+    1. Download the macOS installer from [mullvad.net/download](https://mullvad.net/download/)
+    2. Open the `.pkg` file and follow the installation steps
+    3. Enter your administrator password when prompted
+    4. Grant system extension and VPN permissions in System Preferences
+    5. Launch Mullvad VPN from Applications
+  </Accordion>
+  
+  <Accordion title="Linux">
+    **Debian/Ubuntu:**
+    ```bash
+    sudo apt install ./MullvadVPN-*.deb
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+    **Fedora/RHEL:**
+    ```bash
+    sudo dnf install ./MullvadVPN-*.rpm
+    ```
+    
+    The daemon service starts automatically. Launch the GUI from your applications menu or run `mullvad-gui` in your terminal.
+  </Accordion>
+  
+  <Accordion title="Android">
+    1. Open the Google Play Store or F-Droid
+    2. Search for "Mullvad VPN"
+    3. Tap "Install"
+    4. Launch the app from your home screen
+  </Accordion>
+  
+  <Accordion title="iOS">
+    1. Open the App Store
+    2. Search for "Mullvad VPN"
+    3. Tap "Get" and authenticate
+    4. Launch the app from your home screen
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+For detailed installation instructions, see the [Installation guide](/installation).
+
+## Step 2: Create or log in to your account
+
+When you first launch Mullvad VPN, you'll see the login screen.
+
+### Creating a new account
+
+<Steps>
+  <Step title="Generate account number">
+    Click **"Create account"** or **"Generate account number"**. The app will instantly create a new account number for you.
+    
+    <Warning>
+      Write down your account number and store it securely. This is your only credential - there's no password reset or account recovery.
+    </Warning>
+  </Step>
+  
+  <Step title="Add time to your account">
+    New accounts start with no time. You'll need to add credit to your account:
+    
+    - Click **"Buy more credit"** in the app
+    - Visit [mullvad.net/account](https://mullvad.net/account/) in your browser
+    - Use the account number you just created
+    - Add time using cryptocurrency, credit card, or other payment methods
+  </Step>
+  
+  <Step title="Verify your account">
+    Once you've added time, the app will detect it automatically. You're now ready to connect!
+  </Step>
+</Steps>
+
+### Logging in to an existing account
+
+If you already have a Mullvad account:
+
+<Steps>
+  <Step title="Enter your account number">
+    Type or paste your 16-digit account number (format: 1234 5678 9012 3456).
+  </Step>
+  
+  <Step title="Log in">
+    Click **"Login"**. The app will verify your account and display your remaining time.
+  </Step>
+</Steps>
+
+## Step 3: Connect to the VPN
+
+Once you're logged in, connecting is simple:
+
+<Steps>
+  <Step title="Click the connect button">
+    In the main app window, click the large **"Connect"** or **"Secure my connection"** button.
+    
+    The app will automatically:
+    - Select an optimal server based on your location
+    - Establish a secure WireGuard tunnel
+    - Configure your system's firewall rules
+    - Set up secure DNS
+  </Step>
+  
+  <Step title="Wait for connection">
+    You'll see the status change from "Connecting" to "Connected". This usually takes 2-5 seconds.
+    
+    The app shows:
+    - **Connected**: You're protected and your traffic is encrypted
+    - **Your current location**: The VPN server location you're connected to
+    - **In/Out traffic**: Real-time bandwidth usage
+  </Step>
+  
+  <Step title="Verify your connection">
+    Visit [mullvad.net/check](https://mullvad.net/check/) to verify:
+    - You're connected to Mullvad
+    - Your IP address is hidden
+    - DNS queries are secure
+  </Step>
+</Steps>
+
+<Note>
+  On Android and iOS, you'll be prompted to grant VPN permissions the first time you connect. Tap "OK" or "Allow" to proceed.
+</Note>
+
+## Step 4: Choose your server location (optional)
+
+By default, Mullvad automatically selects the best server. To choose a specific location:
+
+<Steps>
+  <Step title="Open server selection">
+    Click **"Select location"** or the current location name in the app.
+  </Step>
+  
+  <Step title="Choose a country, city, or specific server">
+    - Browse the list of available locations
+    - Click on a country to see cities
+    - Click on a city to see individual servers
+    - Select your preferred location
+  </Step>
+  
+  <Step title="Connect to the new location">
+    The app will automatically reconnect to your chosen server. Your connection remains secure during the switch.
+  </Step>
+</Steps>
+
+## Understanding connection states
+
+The Mullvad VPN app has several connection states:
+
+| State | Description | Your traffic |
+|-------|-------------|-------------|
+| **Disconnected** | Not connected to VPN | Not protected (unless Lockdown mode is enabled) |
+| **Connecting** | Establishing tunnel | Protected - all traffic is blocked until tunnel is ready |
+| **Connected** | Tunnel is active | Protected - all traffic goes through encrypted tunnel |
+| **Disconnecting** | Closing tunnel | Protected - traffic remains blocked |
+| **Error** | Connection failed | Protected - all traffic is blocked |
+
+<Warning>
+  Mullvad VPN includes an always-on kill switch. If the tunnel fails, your traffic is blocked rather than sent unencrypted. This "fail closed" approach ensures no data leaks.
+</Warning>
+
+## Basic settings
+
+Here are some important settings to configure:
+
+### Enable auto-connect
+
+<Steps>
+  <Step title="Open settings">
+    Click the gear/settings icon in the app.
+  </Step>
+  
+  <Step title="Enable auto-connect">
+    Toggle **"Auto-connect"** to automatically connect when the app starts.
+  </Step>
+  
+  <Step title="Enable launch on start-up (optional)">
+    Toggle **"Launch app on start-up"** to start Mullvad VPN when your device boots.
+    
+    When both options are enabled, you'll be protected automatically when your computer starts.
+  </Step>
+</Steps>
+
+### Configure local network access
+
+By default, Mullvad blocks access to devices on your local network (printers, file shares, etc.).
+
+To enable local network access:
+
+<Steps>
+  <Step title="Open settings">
+    Go to Settings in the app.
+  </Step>
+  
+  <Step title="Enable local network sharing">
+    Toggle **"Local network sharing"** or **"Allow LAN"**.
+    
+    This allows traffic to private IP ranges like `192.168.x.x` and `10.x.x.x`.
+  </Step>
+</Steps>
+
+<Note>
+  On iOS, the local network is always accessible due to platform limitations.
+</Note>
+
+### Enable lockdown mode
+
+<Warning>
+  Lockdown mode blocks all internet traffic when you're not connected to the VPN.
+</Warning>
+
+To enable lockdown mode:
+
+1. Go to Settings
+2. Toggle **"Lockdown mode"** or **"Block when disconnected"**
+3. Even when disconnected, all traffic will be blocked until you reconnect
+
+This is useful if you want to ensure you can never access the internet without VPN protection.
+
+## Using the command-line interface (Desktop only)
+
+On desktop platforms, you can also control Mullvad VPN using the CLI:
+
+### Check status
+
+```bash
+mullvad status
+```
+
+### Connect to the VPN
+
+```bash
+mullvad connect
+```
+
+### Disconnect from the VPN
+
+```bash
+mullvad disconnect
+```
+
+### Set a specific location
+
+```bash
+# Connect to a country
+mullvad relay set location se  # Sweden
+
+# Connect to a city
+mullvad relay set location us nyc  # New York City, USA
+
+# Connect to a specific server
+mullvad relay set location se got se-got-wg-001
+```
+
+### Enable auto-connect
+
+```bash
+mullvad auto-connect set on
+```
+
+### View all available commands
+
+```bash
+mullvad --help
+```
+
+## Troubleshooting
 
 <AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+  <Accordion title="Can't connect to VPN">
+    1. Check that you have time remaining on your account
+    2. Verify your internet connection is working
+    3. Try a different server location
+    4. On desktop, restart the mullvad-daemon service:
+       - **Windows**: `sc.exe stop mullvadvpn && sc.exe start mullvadvpn`
+       - **macOS/Linux**: `sudo systemctl restart mullvad-daemon`
+  </Accordion>
+  
+  <Accordion title="Slow connection speeds">
+    1. Try connecting to a server closer to your physical location
+    2. Disable WireGuard multihop if enabled
+    3. Check if DAITA is enabled - it adds privacy but may reduce speed
+    4. Try switching between UDP and TCP protocols
+  </Accordion>
+  
+  <Accordion title="Can't access local network devices">
+    Make sure **"Local network sharing"** or **"Allow LAN"** is enabled in Settings.
+  </Accordion>
+  
+  <Accordion title="Tray icon not showing (Linux)">
+    Install the AppIndicator extension for GNOME:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
+    ```bash
+    sudo apt install libappindicator3-1
+    ```
+    
+    Or install via [GNOME Extensions](https://extensions.gnome.org/extension/615/appindicator-support/).
+  </Accordion>
+  
+  <Accordion title="VPN permission denied (Android/iOS)">
+    1. Go to your device Settings
+    2. Navigate to VPN settings
+    3. Ensure Mullvad VPN has permission to create VPN connections
+    4. On Android, enable "Block connections without VPN" for additional security
   </Accordion>
 </AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that you're connected, explore advanced features:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card
+    title="Security features"
+    icon="shield"
+    href="/essentials/security"
+  >
+    Learn about quantum-resistant tunnels, DAITA, and kill switch
+  </Card>
+  <Card
+    title="Advanced settings"
+    icon="sliders"
+    href="/essentials/settings"
+  >
+    Configure multihop, custom DNS, and split tunneling
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api-reference"
+  >
+    Integrate with the management interface
+  </Card>
+  <Card
+    title="Troubleshooting"
+    icon="wrench"
+    href="/essentials/troubleshooting"
+  >
+    Solve common issues and optimize performance
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Getting help
+
+If you need assistance:
+
+- **Support**: Email [support@mullvadvpn.net](mailto:support@mullvadvpn.net)
+- **Guides**: Visit [mullvad.net/help](https://mullvad.net/help/)
+- **Source code**: [github.com/mullvad/mullvadvpn-app](https://github.com/mullvad/mullvadvpn-app)
+- **Security issues**: See [SECURITY.md](https://github.com/mullvad/mullvadvpn-app/blob/main/SECURITY.md)

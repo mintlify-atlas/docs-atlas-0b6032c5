@@ -1,0 +1,305 @@
+---
+title: 'Daemon Architecture'
+description: 'Mullvad daemon internal architecture and actor system'
+---
+
+# Daemon Architecture
+
+The Mullvad daemon is the core security-critical component responsible for upholding the VPN client's security guarantees. It's designed as an asynchronous actor system that can handle multiple concurrent operations without blocking.
+
+## Actor System Design
+
+The daemon uses an actor-based architecture built on Tokio's async runtime. This design allows the daemon to:
+
+- Service multiple frontend clients simultaneously
+- Handle long-running operations without blocking
+- Coordinate complex interactions between components
+- Maintain responsiveness under all conditions
+
+### Core Actors
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Mullvad Daemon                         │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │       Management Interface Server (gRPC)             │  │
+│  │  - Accepts connections from frontends                │  │
+│  │  - Multiplexes commands to daemon core               │  │
+│  │  - Streams events back to clients                    │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                           │                                 │
+│                           ▼                                 │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              Daemon Core Actor                       │  │
+│  │  - Central coordinator                               │  │
+│  │  - Settings persistence                              │  │
+│  │  - State management                                  │  │
+│  │  - Event broadcasting                                │  │
+│  └──────────────────────────────────────────────────────┘  │
+│           │            │            │           │           │
+│           ▼            ▼            ▼           ▼           │
+│  ┌─────────────┐ ┌──────────┐ ┌─────────┐ ┌──────────────┐│
+│  │   Account   │ │  Device  │ │   API   │ │    Relay     ││
+│  │   Manager   │ │ Manager  │ │ Runtime │ │   Updater    ││
+│  └─────────────┘ └──────────┘ └─────────┘ └──────────────┘│
+│                                     │                       │
+│  ┌──────────────────────────────────┼──────────────────┐   │
+│  │     Tunnel State Machine         ▼                  │   │
+│  │  - Coordinates tunnel lifecycle                     │   │
+│  │  - Enforces security policies                       │   │
+│  │  - Manages system configuration                     │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Component Responsibilities
+
+### Management Interface Server
+
+The management interface is implemented using gRPC and defined in `mullvad-management-interface/proto/management_interface.proto`.
+
+**Key responsibilities:**
+- Accept and authenticate client connections
+- Deserialize command messages from frontends
+- Route commands to appropriate daemon actors
+- Maintain event subscriptions for multiple clients
+- Stream state changes, settings updates, and events to subscribers
+
+**Critical design requirement:** No command processing should ever block another command. All operations are asynchronous.
+
+### Daemon Core
+
+The main daemon actor coordinates all subsystems and maintains the application state.
+
+**Manages:**
+- Settings persistence to disk
+- Target state (connect/disconnect user intent)
+- Device and account state
+- Custom relay lists
+- Access methods for API connectivity
+
+**Responsibilities:**
+- Dispatch commands to appropriate subsystems
+- Aggregate state from multiple actors
+- Broadcast state change events to subscribed clients
+- Coordinate interactions between components
+- Prevent deadlocks through careful async orchestration
+
+### Account Manager
+
+Handles all account-related operations:
+- Account creation and login
+- Device registration and management
+- Voucher redemption
+- Account data retrieval
+- Token generation for web authentication
+
+Communicates with the API runtime to make REST calls to api.mullvad.net.
+
+### Device Manager
+
+Manages WireGuard device lifecycle:
+- Device creation on login
+- WireGuard key generation and rotation
+- Key rotation scheduling (configurable interval)
+- Device listing and removal
+- Public key management
+
+### API Runtime
+
+A dedicated actor for managing all REST API communication:
+
+**Features:**
+- Connection pooling and reuse
+- Shadowsocks proxy support for censorship resistance
+- Request queuing and concurrent execution
+- Connection resetting when tunnel state changes
+- Offline state awareness (blocks requests when offline)
+- Non-blocking operation (all requests can be dropped mid-flight)
+
+**Deadlock prevention:** The API runtime coordinates with the tunnel state machine to receive API endpoint updates. Care must be taken that the TSM never depends on an API request completing if the API runtime is waiting for the TSM to change states.
+
+### Relay List Updater
+
+Manages the relay server list:
+- Periodic updates from API
+- Caching to local filesystem
+- Parsing and validation
+- Distribution to relay selector
+- Version tracking
+
+### GeoIP Handler
+
+Determines user's exit location:
+- Queries location API when connected
+- Caches location data
+- Broadcasts location changes to frontends
+
+## Asynchronous Message Flow
+
+The daemon processes commands asynchronously to maintain responsiveness. Here's an example flow when updating relay constraints:
+
+```
+Frontend
+  │
+  │ SetRelaySettings(constraints) [gRPC]
+  ▼
+Management Interface
+  │
+  │ send(SetRelaySettings) [async channel]
+  ▼
+Daemon Core
+  │
+  ├──► Save settings [async file I/O]
+  │
+  ├──► Relay Selector.update_constraints() [message]
+  │
+  └──► Tunnel State Machine.reconnect() [message]
+       │
+       └──► [State machine processes independently]
+            │
+            └──► Daemon Core ◄─── TunnelStateChange event
+                 │
+                 └──► All Subscribed Frontends ◄─── broadcast
+```
+
+Key properties:
+- The management interface returns immediately after queueing the command
+- Settings are persisted asynchronously
+- The relay selector and TSM process updates independently
+- State change events are broadcast to all connected clients
+- No single operation blocks any other
+
+## Critical Paths and Dependencies
+
+Several execution flows have complex dependencies that require careful coordination:
+
+### API Access During Blocking States
+
+The API must be reachable even when the tunnel is down (for login, relay list updates, etc.):
+
+1. **Firewall** allows API endpoint traffic in all states
+2. **API Runtime** receives current endpoint from **Tunnel State Machine**
+3. **TSM** updates allowed endpoint when connecting/connected
+4. **API Runtime** never blocks **TSM** state transitions
+
+### Settings Changes Affecting Active Tunnel
+
+When settings change that affect the current tunnel connection:
+
+1. **Daemon Core** receives settings update command
+2. Settings persisted to disk (async, non-blocking)
+3. **Relay Selector** updated with new constraints
+4. **TSM** receives reconnect command if currently connected
+5. **TSM** tears down existing tunnel and establishes new one
+6. Frontend receives series of state transition events
+
+### Offline Detection Integration
+
+The offline monitor affects multiple subsystems:
+
+- **Tunnel State Machine**: Pauses reconnection attempts when offline
+- **API Runtime**: Queues requests when offline
+- **Relay List Updater**: Defers updates when offline
+
+## Platform-Specific Initialization
+
+### Desktop (Linux/Windows/macOS)
+
+```rust
+// Simplified initialization flow
+async fn start_daemon() {
+    // 1. Initialize runtime
+    let runtime = tokio::runtime::Runtime::new()?;
+    
+    // 2. Load settings from disk
+    let settings = Settings::load();
+    
+    // 3. Initialize management interface socket
+    let management_interface = ManagementInterfaceServer::start(socket_path);
+    
+    // 4. Create daemon with all subsystems
+    let daemon = Daemon::start(settings, management_interface).await;
+    
+    // 5. Run daemon until shutdown
+    daemon.run().await;
+}
+```
+
+### Android
+
+On Android, the daemon is initialized via JNI from the VpnService:
+
+```rust
+#[no_mangle]
+pub extern "system" fn Java_..._MullvadDaemon_initialize(
+    env: JNIEnv,
+    vpn_service: JObject,
+    rpc_socket_path: JObject,
+    files_directory: JObject,
+) {
+    // 1. Create Android context from JNI objects
+    let android_context = AndroidContext::from_jni(env, vpn_service);
+    
+    // 2. Initialize Tokio runtime
+    let runtime = tokio::runtime::Runtime::new();
+    
+    // 3. Load settings and create daemon
+    let daemon = Daemon::start(config, android_context).await;
+    
+    // 4. Store daemon handle (static singleton)
+    // 5. Frontend communicates via JNI method calls
+}
+```
+
+### iOS
+
+The iOS app uses a different architecture with WireGuard-kit handling the tunnel, while the Mullvad layer provides account management and relay selection.
+
+## Threading Model
+
+- **Main Runtime**: Tokio multi-threaded runtime for async operations
+- **Management Interface**: Runs on Tokio runtime, handles gRPC connections
+- **Daemon Actors**: All run on the same Tokio runtime, communicate via channels
+- **Blocking Operations**: Rare; when necessary, use `tokio::task::spawn_blocking`
+
+## Error Handling
+
+The daemon follows a fail-secure approach:
+
+- Errors in non-critical paths are logged but don't crash the daemon
+- Errors affecting security (firewall, tunnel) transition to error state
+- Error state blocks all traffic to prevent leaks
+- Recovery attempts are made automatically
+- Unrecoverable errors require user intervention
+
+## State Persistence
+
+The daemon persists state across restarts:
+
+- **Settings**: JSON file in app data directory
+- **Account/Device**: Encrypted storage
+- **Relay List**: Cached JSON for offline access
+- **Target State**: Whether user wanted to be connected on shutdown
+
+## Shutdown Procedure
+
+```
+1. Receive shutdown signal (SIGTERM, management command, or system event)
+2. Stop accepting new management interface connections
+3. Send disconnect command to tunnel state machine
+4. Wait for tunnel to fully disconnect (with timeout)
+5. Persist current state to disk
+6. Clean up system configuration (firewall, DNS, routing)
+7. Close all async tasks
+8. Exit cleanly
+```
+
+The daemon has a 5-second shutdown timeout (`TUNNEL_STATE_MACHINE_SHUTDOWN_TIMEOUT`) to ensure timely termination even if cleanup hangs.
+
+## Related Documentation
+
+- [Tunnel State Machine](/architecture/tunnel-state-machine) - State machine details
+- [Frontend Communication](/architecture/frontends) - How frontends interact with daemon
+- [Architecture Overview](/architecture/overview) - High-level system architecture
